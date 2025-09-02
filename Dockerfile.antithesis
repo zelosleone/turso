@@ -13,7 +13,6 @@ FROM chef AS planner
 COPY ./Cargo.lock ./Cargo.lock
 COPY ./Cargo.toml ./Cargo.toml
 COPY ./bindings/dart ./bindings/dart/
-COPY ./bindings/go ./bindings/go/
 COPY ./bindings/java ./bindings/java/
 COPY ./bindings/javascript ./bindings/javascript/
 COPY ./bindings/python ./bindings/python/
@@ -53,7 +52,6 @@ COPY --from=planner /app/recipe.json recipe.json
 RUN cargo chef cook --bin turso_stress --release --recipe-path recipe.json
 COPY --from=planner /app/Cargo.toml ./Cargo.toml
 COPY --from=planner /app/bindings/dart ./bindings/dart/
-COPY --from=planner /app/bindings/go ./bindings/go/
 COPY --from=planner /app/bindings/java ./bindings/java/
 COPY --from=planner /app/bindings/javascript ./bindings/javascript/
 COPY --from=planner /app/bindings/python ./bindings/python/
