@@ -69,6 +69,7 @@ rand = "0.9.2"
 tracing = "0.1.41"
 schemars = "1.0.4"
 garde = "0.22"
+parking_lot = "0.12.4"
 
 [profile.release]
 debug = "line-tables-only"
