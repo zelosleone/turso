@@ -73,12 +73,7 @@ pub fn resolve_aggregates(
                                 "DISTINCT aggregate functions must have exactly one argument"
                             );
                         }
-                        aggs.push(Aggregate {
-                            func: f,
-                            args: args.iter().map(|arg| *arg.clone()).collect(),
-                            original_expr: expr.clone(),
-                            distinctness,
-                        });
+                        aggs.push(Aggregate::new(f, args, expr, distinctness));
                         contains_aggregates = true;
                     }
                     _ => {
@@ -95,12 +90,7 @@ pub fn resolve_aggregates(
                     );
                 }
                 if let Ok(Func::Agg(f)) = Func::resolve_function(name.as_str(), 0) {
-                    aggs.push(Aggregate {
-                        func: f,
-                        args: vec![],
-                        original_expr: expr.clone(),
-                        distinctness: Distinctness::NonDistinct,
-                    });
+                    aggs.push(Aggregate::new(f, &[], expr, Distinctness::NonDistinct));
                     contains_aggregates = true;
                 }
             }

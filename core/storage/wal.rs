@@ -1082,7 +1082,7 @@ impl Wal for WalFile {
         });
         begin_read_wal_frame(
             &self.get_shared().file,
-            offset + WAL_FRAME_HEADER_SIZE,
+            offset + WAL_FRAME_HEADER_SIZE as u64,
             buffer_pool,
             complete,
             page_idx,
@@ -1095,6 +1095,11 @@ impl Wal for WalFile {
         tracing::debug!("read_frame({})", frame_id);
         let offset = self.frame_offset(frame_id);
         let (frame_ptr, frame_len) = (frame.as_mut_ptr(), frame.len());
+
+        let encryption_ctx = {
+            let io_ctx = self.io_ctx.borrow();
+            io_ctx.encryption_context().cloned()
+        };
         let complete = Box::new(move |res: Result<(Arc<Buffer>, i32), CompletionError>| {
             let Ok((buf, bytes_read)) = res else {
                 return;
@@ -1104,9 +1109,33 @@ impl Wal for WalFile {
                 bytes_read == buf_len as i32,
                 "read({bytes_read}) != expected({buf_len})"
             );
-            let buf_ptr = buf.as_mut_ptr();
+            let buf_ptr = buf.as_ptr();
+            let frame_ref: &mut [u8] =
+                unsafe { std::slice::from_raw_parts_mut(frame_ptr, frame_len) };
+
+            // Copy the just-read WAL frame into the destination buffer
             unsafe {
                 std::ptr::copy_nonoverlapping(buf_ptr, frame_ptr, frame_len);
+            }
+
+            // Now parse the header from the freshly-copied data
+            let (header, raw_page) = sqlite3_ondisk::parse_wal_frame_header(frame_ref);
+
+            if let Some(ctx) = encryption_ctx.clone() {
+                match ctx.decrypt_page(raw_page, header.page_number as usize) {
+                    Ok(decrypted_data) => {
+                        turso_assert!(
+                            (frame_len - WAL_FRAME_HEADER_SIZE) == decrypted_data.len(),
+                            "frame_len - header_size({}) != expected({})",
+                            frame_len - WAL_FRAME_HEADER_SIZE,
+                            decrypted_data.len()
+                        );
+                        frame_ref[WAL_FRAME_HEADER_SIZE..].copy_from_slice(&decrypted_data);
+                    }
+                    Err(_) => {
+                        tracing::error!("Failed to decrypt page data for frame_id={frame_id}");
+                    }
+                }
             }
         });
         let c =
@@ -1167,7 +1196,7 @@ impl Wal for WalFile {
             });
             let c = begin_read_wal_frame(
                 &self.get_shared().file,
-                offset + WAL_FRAME_HEADER_SIZE,
+                offset + WAL_FRAME_HEADER_SIZE as u64,
                 buffer_pool,
                 complete,
                 page_id as usize,
@@ -1431,14 +1460,14 @@ impl Wal for WalFile {
         let mut next_frame_id = self.max_frame + 1;
         // Build every frame in order, updating the rolling checksum
         for (idx, page) in pages.iter().enumerate() {
-            let page_id = page.get().id as u64;
+            let page_id = page.get().id;
             let plain = page.get_contents().as_ptr();
 
             let data_to_write: std::borrow::Cow<[u8]> = {
                 let io_ctx = self.io_ctx.borrow();
                 let ectx = io_ctx.encryption_context();
                 if let Some(ctx) = ectx.as_ref() {
-                    Cow::Owned(ctx.encrypt_page(plain, page_id as usize)?)
+                    Cow::Owned(ctx.encrypt_page(plain, page_id)?)
                 } else {
                     Cow::Borrowed(plain)
                 }
@@ -1552,11 +1581,10 @@ impl WalFile {
         self.get_shared().wal_header.lock().page_size
     }
 
-    fn frame_offset(&self, frame_id: u64) -> usize {
+    fn frame_offset(&self, frame_id: u64) -> u64 {
         assert!(frame_id > 0, "Frame ID must be 1-based");
         let page_offset = (frame_id - 1) * (self.page_size() + WAL_FRAME_HEADER_SIZE as u32) as u64;
-        let offset = WAL_HEADER_SIZE as u64 + page_offset;
-        offset as usize
+        WAL_HEADER_SIZE as u64 + page_offset
     }
 
     #[allow(clippy::mut_from_ref)]
@@ -1748,7 +1776,7 @@ impl WalFile {
 
                         // Try cache first, if enabled
                         if let Some(cached_page) =
-                            pager.cache_get_for_checkpoint(page_id as usize, target_frame, seq)
+                            pager.cache_get_for_checkpoint(page_id as usize, target_frame, seq)?
                         {
                             let contents = cached_page.get_contents();
                             let buffer = contents.buffer.clone();
@@ -1805,7 +1833,7 @@ impl WalFile {
                             self.ongoing_checkpoint.pages_to_checkpoint.iter()
                         {
                             if *cached {
-                                let page = pager.cache_get((*page_id) as usize);
+                                let page = pager.cache_get((*page_id) as usize)?;
                                 turso_assert!(
                                     page.is_some(),
                                     "page should still exist in the page cache"
@@ -2102,7 +2130,7 @@ impl WalFile {
         // schedule read of the page payload
         let c = begin_read_wal_frame(
             &self.get_shared().file,
-            offset + WAL_FRAME_HEADER_SIZE,
+            offset + WAL_FRAME_HEADER_SIZE as u64,
             self.buffer_pool.clone(),
             complete,
             page_id,
@@ -2288,7 +2316,7 @@ pub mod test {
         let done = Rc::new(Cell::new(false));
         let _done = done.clone();
         let _ = file.file.truncate(
-            WAL_HEADER_SIZE,
+            WAL_HEADER_SIZE as u64,
             Completion::new_trunc(move |_| {
                 let done = _done.clone();
                 done.set(true);
