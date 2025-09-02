@@ -371,27 +371,7 @@ fn prepare_one_select_plan(
                                 }
                                 match Func::resolve_function(name.as_str(), args_count) {
                                     Ok(Func::Agg(f)) => {
-                                        let agg_args = match (args.is_empty(), &f) {
-                                            (true, crate::function::AggFunc::Count0) => {
-                                                // COUNT() case
-                                                vec![ast::Expr::Literal(ast::Literal::Numeric(
-                                                    "1".to_string(),
-                                                ))
-                                                .into()]
-                                            }
-                                            (true, _) => crate::bail_parse_error!(
-                                                "Aggregate function {} requires arguments",
-                                                name.as_str()
-                                            ),
-                                            (false, _) => args.clone(),
-                                        };
-
-                                        let agg = Aggregate {
-                                            func: f,
-                                            args: agg_args.iter().map(|arg| *arg.clone()).collect(),
-                                            original_expr: *expr.clone(),
-                                            distinctness,
-                                        };
+                                        let agg = Aggregate::new(f, args, expr, distinctness);
                                         aggregate_expressions.push(agg);
                                         plan.result_columns.push(ResultSetColumn {
                                             alias: maybe_alias.as_ref().map(|alias| match alias {
@@ -446,15 +426,12 @@ fn prepare_one_select_plan(
                                                     contains_aggregates,
                                                 });
                                             } else {
-                                                let agg = Aggregate {
-                                                    func: AggFunc::External(f.func.clone().into()),
-                                                    args: args
-                                                        .iter()
-                                                        .map(|arg| *arg.clone())
-                                                        .collect(),
-                                                    original_expr: *expr.clone(),
+                                                let agg = Aggregate::new(
+                                                    AggFunc::External(f.func.clone().into()),
+                                                    args,
+                                                    expr,
                                                     distinctness,
-                                                };
+                                                );
                                                 aggregate_expressions.push(agg);
                                                 plan.result_columns.push(ResultSetColumn {
                                                     alias: maybe_alias.as_ref().map(|alias| {
@@ -488,14 +465,8 @@ fn prepare_one_select_plan(
                                 }
                                 match Func::resolve_function(name.as_str(), 0) {
                                     Ok(Func::Agg(f)) => {
-                                        let agg = Aggregate {
-                                            func: f,
-                                            args: vec![ast::Expr::Literal(ast::Literal::Numeric(
-                                                "1".to_string(),
-                                            ))],
-                                            original_expr: *expr.clone(),
-                                            distinctness: Distinctness::NonDistinct,
-                                        };
+                                        let agg =
+                                            Aggregate::new(f, &[], expr, Distinctness::NonDistinct);
                                         aggregate_expressions.push(agg);
                                         plan.result_columns.push(ResultSetColumn {
                                             alias: maybe_alias.as_ref().map(|alias| match alias {

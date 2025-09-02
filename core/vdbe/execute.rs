@@ -4461,10 +4461,16 @@ pub fn op_function(
                 }
             }
             ScalarFunc::SqliteVersion => {
-                let version_integer =
-                    return_if_io!(pager.with_header(|header| header.version_number)).get() as i64;
-                let version = execute_sqlite_version(version_integer);
-                state.registers[*dest] = Register::Value(Value::build_text(version));
+                if !program.connection.is_db_initialized() {
+                    state.registers[*dest] =
+                        Register::Value(Value::build_text(info::build::PKG_VERSION));
+                } else {
+                    let version_integer =
+                        return_if_io!(pager.with_header(|header| header.version_number)).get()
+                            as i64;
+                    let version = execute_sqlite_version(version_integer);
+                    state.registers[*dest] = Register::Value(Value::build_text(version));
+                }
             }
             ScalarFunc::SqliteSourceId => {
                 let src_id = format!(
@@ -4852,10 +4858,10 @@ pub fn op_function(
 
                         match stmt {
                             ast::Stmt::CreateIndex {
+                                tbl_name,
                                 unique,
                                 if_not_exists,
                                 idx_name,
-                                tbl_name,
                                 columns,
                                 where_clause,
                             } => {
@@ -4867,10 +4873,10 @@ pub fn op_function(
 
                                 Some(
                                     ast::Stmt::CreateIndex {
+                                        tbl_name: ast::Name::new(&rename_to),
                                         unique,
                                         if_not_exists,
                                         idx_name,
-                                        tbl_name: ast::Name::new(&rename_to),
                                         columns,
                                         where_clause,
                                     }
@@ -4879,9 +4885,9 @@ pub fn op_function(
                                 )
                             }
                             ast::Stmt::CreateTable {
+                                tbl_name,
                                 temporary,
                                 if_not_exists,
-                                tbl_name,
                                 body,
                             } => {
                                 let table_name = normalize_ident(tbl_name.name.as_str());
@@ -4892,13 +4898,13 @@ pub fn op_function(
 
                                 Some(
                                     ast::Stmt::CreateTable {
-                                        temporary,
-                                        if_not_exists,
                                         tbl_name: ast::QualifiedName {
                                             db_name: None,
                                             name: ast::Name::new(&rename_to),
                                             alias: None,
                                         },
+                                        temporary,
+                                        if_not_exists,
                                         body,
                                     }
                                     .format()
@@ -4911,7 +4917,7 @@ pub fn op_function(
 
                     (new_name, new_tbl_name, new_sql)
                 }
-                AlterTableFunc::RenameColumn => {
+                AlterTableFunc::AlterColumn | AlterTableFunc::RenameColumn => {
                     let table = {
                         match &state.registers[*start_reg + 5].get_value() {
                             Value::Text(rename_to) => normalize_ident(rename_to.as_str()),
@@ -4926,12 +4932,16 @@ pub fn op_function(
                         }
                     };
 
-                    let rename_to = {
+                    let column_def = {
                         match &state.registers[*start_reg + 7].get_value() {
-                            Value::Text(rename_to) => normalize_ident(rename_to.as_str()),
+                            Value::Text(column_def) => column_def.as_str(),
                             _ => panic!("rename_to parameter should be TEXT"),
                         }
                     };
+
+                    let column_def = Parser::new(column_def.as_bytes())
+                        .parse_column_definition(true)
+                        .unwrap();
 
                     let new_sql = 'sql: {
                         if table != tbl_name {
@@ -4949,11 +4959,11 @@ pub fn op_function(
 
                         match stmt {
                             ast::Stmt::CreateIndex {
+                                tbl_name,
+                                mut columns,
                                 unique,
                                 if_not_exists,
                                 idx_name,
-                                tbl_name,
-                                mut columns,
                                 where_clause,
                             } => {
                                 if table != normalize_ident(tbl_name.as_str()) {
@@ -4965,7 +4975,7 @@ pub fn op_function(
                                         ast::Expr::Id(ast::Name::Ident(id))
                                             if normalize_ident(id) == rename_from =>
                                         {
-                                            *id = rename_to.clone();
+                                            *id = column_def.col_name.as_str().to_owned();
                                         }
                                         _ => {}
                                     }
@@ -4973,11 +4983,11 @@ pub fn op_function(
 
                                 Some(
                                     ast::Stmt::CreateIndex {
+                                        tbl_name,
+                                        columns,
                                         unique,
                                         if_not_exists,
                                         idx_name,
-                                        tbl_name,
-                                        columns,
                                         where_clause,
                                     }
                                     .format()
@@ -4985,10 +4995,10 @@ pub fn op_function(
                                 )
                             }
                             ast::Stmt::CreateTable {
-                                temporary,
-                                if_not_exists,
                                 tbl_name,
                                 body,
+                                temporary,
+                                if_not_exists,
                             } => {
                                 if table != normalize_ident(tbl_name.name.as_str()) {
                                     break 'sql None;
@@ -5008,18 +5018,24 @@ pub fn op_function(
                                     .find(|column| column.col_name == ast::Name::new(&rename_from))
                                     .expect("column being renamed should be present");
 
-                                column.col_name = ast::Name::new(&rename_to);
+                                match alter_func {
+                                    AlterTableFunc::AlterColumn => *column = column_def,
+                                    AlterTableFunc::RenameColumn => {
+                                        column.col_name = column_def.col_name
+                                    }
+                                    _ => unreachable!(),
+                                }
 
                                 Some(
                                     ast::Stmt::CreateTable {
-                                        temporary,
-                                        if_not_exists,
                                         tbl_name,
                                         body: ast::CreateTableBody::ColumnsAndConstraints {
                                             columns,
                                             constraints,
                                             options,
                                         },
+                                        temporary,
+                                        if_not_exists,
                                     }
                                     .format()
                                     .unwrap(),
@@ -7303,7 +7319,7 @@ pub fn op_add_column(
     Ok(InsnFunctionStepResult::Step)
 }
 
-pub fn op_rename_column(
+pub fn op_alter_column(
     program: &Program,
     state: &mut ProgramState,
     insn: &Insn,
@@ -7311,15 +7327,18 @@ pub fn op_rename_column(
     mv_store: Option<&Arc<MvStore>>,
 ) -> Result<InsnFunctionStepResult> {
     load_insn!(
-        RenameColumn {
+        AlterColumn {
             table: table_name,
             column_index,
-            name
+            definition,
+            rename,
         },
         insn
     );
 
     let conn = program.connection.clone();
+
+    let new_column = crate::schema::Column::from(definition);
 
     conn.with_schema_mut(|schema| {
         let table = schema
@@ -7347,13 +7366,17 @@ pub fn op_rename_column(
                     if index_column.name
                         == *column.name.as_ref().expect("btree column should be named")
                     {
-                        index_column.name = name.to_owned();
+                        index_column.name = definition.col_name.as_str().to_owned();
                     }
                 }
             }
         }
 
-        column.name = Some(name.to_owned());
+        if *rename {
+            column.name = new_column.name;
+        } else {
+            *column = new_column;
+        }
     });
 
     state.pc += 1;
