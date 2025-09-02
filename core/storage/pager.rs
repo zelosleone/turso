@@ -2423,7 +2423,7 @@ mod tests {
             })
         };
         let _ = thread.join();
-        let mut cache = cache.write();
+        let cache = cache.read();
         let page_key = PageCacheKey::new(1);
         let page = cache.get(&page_key).unwrap();
         assert_eq!(page.unwrap().get().id, 1);

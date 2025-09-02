@@ -843,10 +843,6 @@ mod tests {
         key
     }
 
-    fn page_has_content(page: &PageRef) -> bool {
-        page.is_loaded() && page.get().contents.is_some()
-    }
-
     fn insert_and_get_entry(cache: &mut PageCache, id: usize) -> (PageCacheKey, PageCacheEntry) {
         let key = create_key(id);
         let page = page_with_content(id);
