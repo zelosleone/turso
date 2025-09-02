@@ -130,6 +130,12 @@ pub struct SimulatorCLI {
         default_value_t = false
     )]
     pub keep_files: bool,
+    #[clap(
+        long,
+        help = "Use memory IO for complex simulations",
+        default_value_t = false
+    )]
+    pub memory_io: bool,
     #[clap(long, default_value_t = ProfileType::Default)]
     /// Profile selector for Simulation run
     pub profile: ProfileType,
