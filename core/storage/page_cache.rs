@@ -111,15 +111,29 @@ impl DumbLruPageCache {
     ) -> Result<(), CacheError> {
         trace!("insert(key={:?})", key);
         // Check first if page already exists in cache
-        if !ignore_exists {
-            if let Some(existing_page_ref) = self.get(&key)? {
-                assert!(
-                    Arc::ptr_eq(&value, &existing_page_ref),
-                    "Attempted to insert different page with same key: {key:?}"
-                );
-                return Err(CacheError::KeyExists);
+        let existing_ptr = self.map.borrow().get(&key).copied();
+        if let Some(ptr) = existing_ptr {
+            if !ignore_exists {
+                if let Some(existing_page_ref) = self.get(&key)? {
+                    assert!(
+                        Arc::ptr_eq(&value, &existing_page_ref),
+                        "Attempted to insert different page with same key: {key:?}"
+                    );
+                    return Err(CacheError::KeyExists);
+                }
+            } else {
+                // ignore_exists is called when the existing entry needs to be updated in place
+                unsafe {
+                    let entry = ptr.as_ptr();
+                    (*entry).page = value;
+                }
+                self.unlink(ptr);
+                self.touch(ptr);
+                return Ok(());
             }
         }
+
+        // Key doesn't exist, proceed with new entry
         self.make_room_for(1)?;
         let entry = Box::new(PageCacheEntry {
             key,
@@ -130,7 +144,6 @@ impl DumbLruPageCache {
         let ptr_raw = Box::into_raw(entry);
         let ptr = unsafe { NonNull::new_unchecked(ptr_raw) };
         self.touch(ptr);
-
         self.map.borrow_mut().insert(key, ptr);
         Ok(())
     }
