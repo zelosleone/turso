@@ -180,12 +180,12 @@ impl File for MemorySimFile {
         Ok(())
     }
 
-    fn pread(&self, pos: usize, c: Completion) -> Result<Completion> {
+    fn pread(&self, pos: u64, c: Completion) -> Result<Completion> {
         self.io_tracker.borrow_mut().pread_calls += 1;
 
         let op = OperationType::Read {
             completion: c.clone(),
-            offset: pos,
+            offset: pos as usize,
         };
         self.insert_op(op);
         Ok(c)
@@ -193,7 +193,7 @@ impl File for MemorySimFile {
 
     fn pwrite(
         &self,
-        pos: usize,
+        pos: u64,
         buffer: Arc<turso_core::Buffer>,
         c: Completion,
     ) -> Result<Completion> {
@@ -201,7 +201,7 @@ impl File for MemorySimFile {
         let op = OperationType::Write {
             buffer,
             completion: c.clone(),
-            offset: pos,
+            offset: pos as usize,
         };
         self.insert_op(op);
         Ok(c)
@@ -209,7 +209,7 @@ impl File for MemorySimFile {
 
     fn pwritev(
         &self,
-        pos: usize,
+        pos: u64,
         buffers: Vec<Arc<turso_core::Buffer>>,
         c: Completion,
     ) -> Result<Completion> {
@@ -220,7 +220,7 @@ impl File for MemorySimFile {
         let op = OperationType::WriteV {
             buffers,
             completion: c.clone(),
-            offset: pos,
+            offset: pos as usize,
         };
         self.insert_op(op);
         Ok(c)
@@ -241,11 +241,11 @@ impl File for MemorySimFile {
         Ok(self.buffer.borrow().len() as u64)
     }
 
-    fn truncate(&self, len: usize, c: Completion) -> Result<Completion> {
+    fn truncate(&self, len: u64, c: Completion) -> Result<Completion> {
         self.io_tracker.borrow_mut().truncate_calls += 1;
         let op = OperationType::Truncate {
             completion: c.clone(),
-            len,
+            len: len as usize,
         };
         self.insert_op(op);
         Ok(c)
