@@ -14,9 +14,7 @@ use crate::error::Error;
 use crate::lexer::{Lexer, Token};
 use crate::token::TokenType::{self, *};
 use crate::Result;
-
-const TRUE_LIT: &str = "TRUE";
-const FALSE_LIT: &str = "FALSE";
+use turso_macros::match_ignore_ascii_case;
 
 macro_rules! peek_expect {
     ( $parser:expr, $( $x:ident ),* $(,)?) => {
@@ -94,26 +92,19 @@ fn from_bytes(bytes: &[u8]) -> String {
 
 #[inline]
 fn join_type_from_bytes(s: &[u8]) -> Result<JoinType> {
-    if b"CROSS".eq_ignore_ascii_case(s) {
-        Ok(JoinType::INNER | JoinType::CROSS)
-    } else if b"FULL".eq_ignore_ascii_case(s) {
-        Ok(JoinType::LEFT | JoinType::RIGHT | JoinType::OUTER)
-    } else if b"INNER".eq_ignore_ascii_case(s) {
-        Ok(JoinType::INNER)
-    } else if b"LEFT".eq_ignore_ascii_case(s) {
-        Ok(JoinType::LEFT | JoinType::OUTER)
-    } else if b"NATURAL".eq_ignore_ascii_case(s) {
-        Ok(JoinType::NATURAL)
-    } else if b"RIGHT".eq_ignore_ascii_case(s) {
-        Ok(JoinType::RIGHT | JoinType::OUTER)
-    } else if b"OUTER".eq_ignore_ascii_case(s) {
-        Ok(JoinType::OUTER)
-    } else {
-        Err(Error::Custom(format!(
+    match_ignore_ascii_case!(match s {
+        b"CROSS" => Ok(JoinType::INNER | JoinType::CROSS),
+        b"FULL" => Ok(JoinType::LEFT | JoinType::RIGHT | JoinType::OUTER),
+        b"INNER" => Ok(JoinType::INNER),
+        b"LEFT" => Ok(JoinType::LEFT | JoinType::OUTER),
+        b"NATURAL" => Ok(JoinType::NATURAL),
+        b"RIGHT" => Ok(JoinType::RIGHT | JoinType::OUTER),
+        b"OUTER" => Ok(JoinType::OUTER),
+        _ => Err(Error::Custom(format!(
             "unsupported JOIN type: {:?}",
             str::from_utf8(s)
-        )))
-    }
+        ))),
+    })
 }
 
 #[inline]
@@ -1369,15 +1360,12 @@ impl<'a> Parser<'a> {
             }
             TK_CTIME_KW => {
                 let tok = eat_assert!(self, TK_CTIME_KW);
-                if b"CURRENT_DATE".eq_ignore_ascii_case(tok.value) {
-                    Ok(Box::new(Expr::Literal(Literal::CurrentDate)))
-                } else if b"CURRENT_TIME".eq_ignore_ascii_case(tok.value) {
-                    Ok(Box::new(Expr::Literal(Literal::CurrentTime)))
-                } else if b"CURRENT_TIMESTAMP".eq_ignore_ascii_case(tok.value) {
-                    Ok(Box::new(Expr::Literal(Literal::CurrentTimestamp)))
-                } else {
-                    unreachable!()
-                }
+                match_ignore_ascii_case!(match tok.value {
+                    b"CURRENT_DATE" => Ok(Box::new(Expr::Literal(Literal::CurrentDate))),
+                    b"CURRENT_TIME" => Ok(Box::new(Expr::Literal(Literal::CurrentTime))),
+                    b"CURRENT_TIMESTAMP" => Ok(Box::new(Expr::Literal(Literal::CurrentTimestamp))),
+                    _ => unreachable!(),
+                })
             }
             TK_NOT => {
                 eat_assert!(self, TK_NOT);
@@ -1550,15 +1538,18 @@ impl<'a> Parser<'a> {
                     })))
                 } else {
                     match name {
-                        Name::Ident(s) => match s.as_str() {
-                            s if s.eq_ignore_ascii_case(TRUE_LIT) => {
-                                return Ok(Box::new(Expr::Literal(Literal::Numeric("1".into()))))
-                            }
-                            s if s.eq_ignore_ascii_case(FALSE_LIT) => {
-                                return Ok(Box::new(Expr::Literal(Literal::Numeric("0".into()))))
-                            }
-                            _ => return Ok(Box::new(Expr::Id(Name::Ident(s)))),
-                        },
+                        Name::Ident(s) => {
+                            let s_bytes = s.as_bytes();
+                            match_ignore_ascii_case!(match s_bytes {
+                                b"true" => {
+                                    Ok(Box::new(Expr::Literal(Literal::Numeric("1".into()))))
+                                }
+                                b"false" => {
+                                    Ok(Box::new(Expr::Literal(Literal::Numeric("0".into()))))
+                                }
+                                _ => return Ok(Box::new(Expr::Id(Name::Ident(s)))),
+                            })
+                        }
                         _ => Ok(Box::new(Expr::Id(name))),
                     }
                 }
@@ -1744,17 +1735,12 @@ impl<'a> Parser<'a> {
                     let tok = eat_assert!(self, TK_MATCH, TK_LIKE_KW);
                     let op = match tok.token_type.unwrap() {
                         TK_MATCH => LikeOperator::Match,
-                        TK_LIKE_KW => {
-                            if b"LIKE".eq_ignore_ascii_case(tok.value) {
-                                LikeOperator::Like
-                            } else if b"GLOB".eq_ignore_ascii_case(tok.value) {
-                                LikeOperator::Glob
-                            } else if b"REGEXP".eq_ignore_ascii_case(tok.value) {
-                                LikeOperator::Regexp
-                            } else {
-                                unreachable!()
-                            }
-                        }
+                        TK_LIKE_KW => match_ignore_ascii_case!(match tok.value {
+                            b"LIKE" => LikeOperator::Like,
+                            b"GLOB" => LikeOperator::Glob,
+                            b"REGEXP" => LikeOperator::Regexp,
+                            _ => unreachable!(),
+                        }),
                         _ => unreachable!(),
                     };
 
@@ -2758,25 +2744,23 @@ impl<'a> Parser<'a> {
                 TK_WITHOUT => {
                     eat_assert!(self, TK_WITHOUT);
                     let tok = eat_expect!(self, TK_ID);
-                    if b"ROWID".eq_ignore_ascii_case(tok.value) {
-                        Ok(TableOptions::WITHOUT_ROWID)
-                    } else {
-                        Err(Error::Custom(format!(
+                    match_ignore_ascii_case!(match tok.value {
+                        b"ROWID" => Ok(TableOptions::WITHOUT_ROWID),
+                        _ => Err(Error::Custom(format!(
                             "unknown table option: {}",
                             from_bytes(tok.value)
-                        )))
-                    }
+                        ))),
+                    })
                 }
                 TK_ID => {
                     let tok = eat_assert!(self, TK_ID);
-                    if b"STRICT".eq_ignore_ascii_case(tok.value) {
-                        Ok(TableOptions::STRICT)
-                    } else {
-                        Err(Error::Custom(format!(
+                    match_ignore_ascii_case!(match tok.value {
+                        b"STRICT" => Ok(TableOptions::STRICT),
+                        _ => Err(Error::Custom(format!(
                             "unknown table option: {}",
                             from_bytes(tok.value)
-                        )))
-                    }
+                        ))),
+                    })
                 }
                 _ => Ok(TableOptions::NONE),
             },
@@ -2870,18 +2854,16 @@ impl<'a> Parser<'a> {
                         match &c.col_type {
                             Some(Type { name, .. }) => {
                                 // The datatype must be one of following: INT INTEGER REAL TEXT BLOB ANY
-                                if !(name.eq_ignore_ascii_case("INT")
-                                    || name.eq_ignore_ascii_case("INTEGER")
-                                    || name.eq_ignore_ascii_case("REAL")
-                                    || name.eq_ignore_ascii_case("TEXT")
-                                    || name.eq_ignore_ascii_case("BLOB")
-                                    || name.eq_ignore_ascii_case("ANY"))
-                                {
-                                    return Err(Error::Custom(format!(
-                                        "unknown datatype for {}.{}: \"{}\"",
-                                        tbl_name, c.col_name, name
-                                    )));
-                                }
+                                let bytes_name = name.as_bytes();
+                                match_ignore_ascii_case!(match bytes_name {
+                                    b"INT" | b"INTEGER" | b"REAL" | b"TEXT" | b"BLOB" | b"ANY" => {}
+                                    _ => {
+                                        return Err(Error::Custom(format!(
+                                            "unknown datatype for {}.{}: \"{}\"",
+                                            tbl_name, c.col_name, name
+                                        )));
+                                    }
+                                })
                             }
                             _ => {
                                 // Every column definition must specify a datatype for that column. The freedom to specify a column without a datatype is removed.
