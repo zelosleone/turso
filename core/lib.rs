@@ -99,6 +99,52 @@ pub use util::IOExt;
 use vdbe::builder::QueryMode;
 use vdbe::builder::TableRefIdCounter;
 
+/// Configuration for database features
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct DatabaseOpts {
+    pub enable_mvcc: bool,
+    pub enable_indexes: bool,
+    pub enable_views: bool,
+    pub enable_strict: bool,
+}
+
+impl Default for DatabaseOpts {
+    fn default() -> Self {
+        Self {
+            enable_mvcc: false,
+            enable_indexes: true,
+            enable_views: false,
+            enable_strict: false,
+        }
+    }
+}
+
+impl DatabaseOpts {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn with_mvcc(mut self, enable: bool) -> Self {
+        self.enable_mvcc = enable;
+        self
+    }
+
+    pub fn with_indexes(mut self, enable: bool) -> Self {
+        self.enable_indexes = enable;
+        self
+    }
+
+    pub fn with_views(mut self, enable: bool) -> Self {
+        self.enable_views = enable;
+        self
+    }
+
+    pub fn with_strict(mut self, enable: bool) -> Self {
+        self.enable_strict = enable;
+        self
+    }
+}
+
 pub type Result<T, E = LimboError> = std::result::Result<T, E>;
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -144,7 +190,7 @@ pub struct Database {
     init_lock: Arc<Mutex<()>>,
     open_flags: OpenFlags,
     builtin_syms: RefCell<SymbolTable>,
-    experimental_views: bool,
+    opts: DatabaseOpts,
     n_connections: AtomicUsize,
 }
 
@@ -216,9 +262,9 @@ impl Database {
             io,
             path,
             OpenFlags::default(),
-            enable_mvcc,
-            enable_indexes,
-            false,
+            DatabaseOpts::new()
+                .with_mvcc(enable_mvcc)
+                .with_indexes(enable_indexes),
         )
     }
 
@@ -227,21 +273,11 @@ impl Database {
         io: Arc<dyn IO>,
         path: &str,
         flags: OpenFlags,
-        enable_mvcc: bool,
-        enable_indexes: bool,
-        enable_views: bool,
+        opts: DatabaseOpts,
     ) -> Result<Arc<Database>> {
         let file = io.open_file(path, flags, true)?;
         let db_file = Arc::new(DatabaseFile::new(file));
-        Self::open_with_flags(
-            io,
-            path,
-            db_file,
-            flags,
-            enable_mvcc,
-            enable_indexes,
-            enable_views,
-        )
+        Self::open_with_flags(io, path, db_file, flags, opts)
     }
 
     #[allow(clippy::arc_with_non_send_sync)]
@@ -257,9 +293,9 @@ impl Database {
             path,
             db_file,
             OpenFlags::default(),
-            enable_mvcc,
-            enable_indexes,
-            false,
+            DatabaseOpts::new()
+                .with_mvcc(enable_mvcc)
+                .with_indexes(enable_indexes),
         )
     }
 
@@ -269,9 +305,7 @@ impl Database {
         path: &str,
         db_file: Arc<dyn DatabaseStorage>,
         flags: OpenFlags,
-        enable_mvcc: bool,
-        enable_indexes: bool,
-        enable_views: bool,
+        opts: DatabaseOpts,
     ) -> Result<Arc<Database>> {
         // turso-sync-engine create 2 databases with different names in the same IO if MemoryIO is used
         // in this case we need to bypass registry (as this is MemoryIO DB) but also preserve original distinction in names (e.g. :memory:-draft and :memory:-synced)
@@ -282,9 +316,7 @@ impl Database {
                 &format!("{path}-wal"),
                 db_file,
                 flags,
-                enable_mvcc,
-                enable_indexes,
-                enable_views,
+                opts,
             );
         }
 
@@ -304,15 +336,13 @@ impl Database {
             &format!("{path}-wal"),
             db_file,
             flags,
-            enable_mvcc,
-            enable_indexes,
-            enable_views,
+            opts,
         )?;
         registry.insert(canonical_path, Arc::downgrade(&db));
         Ok(db)
     }
 
-    #[allow(clippy::arc_with_non_send_sync, clippy::too_many_arguments)]
+    #[allow(clippy::arc_with_non_send_sync)]
     #[cfg(all(feature = "fs", feature = "conn_raw_api"))]
     pub fn open_with_flags_bypass_registry(
         io: Arc<dyn IO>,
@@ -320,36 +350,23 @@ impl Database {
         wal_path: &str,
         db_file: Arc<dyn DatabaseStorage>,
         flags: OpenFlags,
-        enable_mvcc: bool,
-        enable_indexes: bool,
-        enable_views: bool,
+        opts: DatabaseOpts,
     ) -> Result<Arc<Database>> {
-        Self::open_with_flags_bypass_registry_internal(
-            io,
-            path,
-            wal_path,
-            db_file,
-            flags,
-            enable_mvcc,
-            enable_indexes,
-            enable_views,
-        )
+        Self::open_with_flags_bypass_registry_internal(io, path, wal_path, db_file, flags, opts)
     }
 
-    #[allow(clippy::arc_with_non_send_sync, clippy::too_many_arguments)]
+    #[allow(clippy::arc_with_non_send_sync)]
     fn open_with_flags_bypass_registry_internal(
         io: Arc<dyn IO>,
         path: &str,
         wal_path: &str,
         db_file: Arc<dyn DatabaseStorage>,
         flags: OpenFlags,
-        enable_mvcc: bool,
-        enable_indexes: bool,
-        enable_views: bool,
+        opts: DatabaseOpts,
     ) -> Result<Arc<Database>> {
         let maybe_shared_wal = WalFileShared::open_shared_if_exists(&io, wal_path)?;
 
-        let mv_store = if enable_mvcc {
+        let mv_store = if opts.enable_mvcc {
             Some(Arc::new(MvStore::new(
                 mvcc::LocalClock::new(),
                 mvcc::persistent_storage::Storage::new_noop(),
@@ -372,11 +389,12 @@ impl Database {
         } else {
             BufferPool::DEFAULT_ARENA_SIZE
         };
+        // opts is now passed as parameter
         let db = Arc::new(Database {
             mv_store,
             path: path.to_string(),
             wal_path: wal_path.to_string(),
-            schema: Mutex::new(Arc::new(Schema::new(enable_indexes))),
+            schema: Mutex::new(Arc::new(Schema::new(opts.enable_indexes))),
             _shared_page_cache: shared_page_cache.clone(),
             maybe_shared_wal: RwLock::new(maybe_shared_wal),
             db_file,
@@ -385,7 +403,7 @@ impl Database {
             open_flags: flags,
             db_state: Arc::new(AtomicDbState::new(db_state)),
             init_lock: Arc::new(Mutex::new(())),
-            experimental_views: enable_views,
+            opts,
             buffer_pool: BufferPool::begin_init(&io, arena_size),
             n_connections: AtomicUsize::new(0),
         });
@@ -617,9 +635,7 @@ impl Database {
         path: &str,
         vfs: Option<S>,
         flags: OpenFlags,
-        indexes: bool,
-        mvcc: bool,
-        views: bool,
+        opts: DatabaseOpts,
     ) -> Result<(Arc<dyn IO>, Arc<Database>)>
     where
         S: AsRef<str> + std::fmt::Display,
@@ -646,7 +662,7 @@ impl Database {
                         }
                     },
                 };
-                let db = Self::open_file_with_flags(io.clone(), path, flags, mvcc, indexes, views)?;
+                let db = Self::open_file_with_flags(io.clone(), path, flags, opts)?;
                 Ok((io, db))
             }
             None => {
@@ -654,7 +670,7 @@ impl Database {
                     MEMORY_PATH => Arc::new(MemoryIO::new()),
                     _ => Arc::new(PlatformIO::new()?),
                 };
-                let db = Self::open_file_with_flags(io.clone(), path, flags, mvcc, indexes, views)?;
+                let db = Self::open_file_with_flags(io.clone(), path, flags, opts)?;
                 Ok((io, db))
             }
         }
@@ -695,7 +711,11 @@ impl Database {
     }
 
     pub fn experimental_views_enabled(&self) -> bool {
-        self.experimental_views
+        self.opts.enable_views
+    }
+
+    pub fn experimental_strict_enabled(&self) -> bool {
+        self.opts.enable_strict
     }
 }
 
@@ -1247,6 +1267,7 @@ impl Connection {
         use_indexes: bool,
         mvcc: bool,
         views: bool,
+        strict: bool,
     ) -> Result<(Arc<dyn IO>, Arc<Connection>)> {
         use crate::util::MEMORY_PATH;
         let opts = OpenOptions::parse(uri)?;
@@ -1257,9 +1278,11 @@ impl Connection {
                 io.clone(),
                 MEMORY_PATH,
                 flags,
-                mvcc,
-                use_indexes,
-                views,
+                DatabaseOpts::new()
+                    .with_mvcc(mvcc)
+                    .with_indexes(use_indexes)
+                    .with_views(views)
+                    .with_strict(strict),
             )?;
             let conn = db.connect()?;
             return Ok((io, conn));
@@ -1268,9 +1291,11 @@ impl Connection {
             &opts.path,
             opts.vfs.as_ref(),
             flags,
-            use_indexes,
-            mvcc,
-            views,
+            DatabaseOpts::new()
+                .with_mvcc(mvcc)
+                .with_indexes(use_indexes)
+                .with_views(views)
+                .with_strict(strict),
         )?;
         if let Some(modeof) = opts.modeof {
             let perms = std::fs::metadata(modeof)?;
@@ -1287,24 +1312,12 @@ impl Connection {
     }
 
     #[cfg(feature = "fs")]
-    fn from_uri_attached(
-        uri: &str,
-        use_indexes: bool,
-        use_mvcc: bool,
-        use_views: bool,
-    ) -> Result<Arc<Database>> {
+    fn from_uri_attached(uri: &str, db_opts: DatabaseOpts) -> Result<Arc<Database>> {
         let mut opts = OpenOptions::parse(uri)?;
         // FIXME: for now, only support read only attach
         opts.mode = OpenMode::ReadOnly;
         let flags = opts.get_flags()?;
-        let (_io, db) = Database::open_new(
-            &opts.path,
-            opts.vfs.as_ref(),
-            flags,
-            use_indexes,
-            use_mvcc,
-            use_views,
-        )?;
+        let (_io, db) = Database::open_new(&opts.path, opts.vfs.as_ref(), flags, db_opts)?;
         if let Some(modeof) = opts.modeof {
             let perms = std::fs::metadata(modeof)?;
             std::fs::set_permissions(&opts.path, perms.permissions())?;
@@ -1736,6 +1749,10 @@ impl Connection {
         self._db.experimental_views_enabled()
     }
 
+    pub fn experimental_strict_enabled(&self) -> bool {
+        self._db.experimental_strict_enabled()
+    }
+
     /// Query the current value(s) of `pragma_name` associated to
     /// `pragma_value`.
     ///
@@ -1832,8 +1849,14 @@ impl Connection {
             .indexes_enabled();
         let use_mvcc = self._db.mv_store.is_some();
         let use_views = self._db.experimental_views_enabled();
+        let use_strict = self._db.experimental_strict_enabled();
 
-        let db = Self::from_uri_attached(path, use_indexes, use_mvcc, use_views)?;
+        let db_opts = DatabaseOpts::new()
+            .with_mvcc(use_mvcc)
+            .with_indexes(use_indexes)
+            .with_views(use_views)
+            .with_strict(use_strict);
+        let db = Self::from_uri_attached(path, db_opts)?;
         let pager = Rc::new(db.init_pager(None)?);
 
         self.attached_databases
