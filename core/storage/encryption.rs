@@ -3,6 +3,7 @@ use crate::{LimboError, Result};
 use aegis::aegis256::Aegis256;
 use aes_gcm::aead::{AeadCore, OsRng};
 use std::ops::Deref;
+use turso_macros::match_ignore_ascii_case;
 // AEGIS-256 supports both 16 and 32 byte tags, we use the 16 byte variant, it is faster
 // and provides sufficient security for our use case.
 const AEGIS_TAG_SIZE: usize = 16;
@@ -267,13 +268,14 @@ impl TryFrom<&str> for CipherMode {
     type Error = LimboError;
 
     fn try_from(s: &str) -> Result<Self, Self::Error> {
-        match s.to_lowercase().as_str() {
-            "aes256gcm" | "aes-256-gcm" | "aes_256_gcm" => Ok(CipherMode::Aes256Gcm),
-            "aegis256" | "aegis-256" | "aegis_256" => Ok(CipherMode::Aegis256),
+        let s_bytes = s.as_bytes();
+        match_ignore_ascii_case!(match s_bytes {
+            b"aes256gcm" | b"aes-256-gcm" | b"aes_256_gcm" => Ok(CipherMode::Aes256Gcm),
+            b"aegis256" | b"aegis-256" | b"aegis_256" => Ok(CipherMode::Aegis256),
             _ => Err(LimboError::InvalidArgument(format!(
                 "Unknown cipher name: {s}"
             ))),
-        }
+        })
     }
 }
 

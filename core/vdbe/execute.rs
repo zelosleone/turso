@@ -39,6 +39,7 @@ use std::{
     rc::Rc,
     sync::{Arc, Mutex},
 };
+use turso_macros::match_ignore_ascii_case;
 
 use crate::{pseudo::PseudoCursor, result::LimboResult};
 
@@ -8831,11 +8832,11 @@ pub fn op_journal_mode(
     // Currently, Turso only supports WAL mode
     // If a new mode is specified, we validate it but always return "wal"
     if let Some(mode) = new_mode {
-        let mode_lower = mode.to_lowercase();
+        let mode_bytes = mode.as_bytes();
         // Valid journal modes in SQLite are: delete, truncate, persist, memory, wal, off
         // We accept any valid mode but always use WAL
-        match mode_lower.as_str() {
-            "delete" | "truncate" | "persist" | "memory" | "wal" | "off" => {
+        match_ignore_ascii_case!(match mode_bytes {
+            b"delete" | b"truncate" | b"persist" | b"memory" | b"wal" | b"off" => {
                 // Mode is valid, but we stay in WAL mode
             }
             _ => {
@@ -8844,7 +8845,7 @@ pub fn op_journal_mode(
                     "Unknown journal mode: {mode}"
                 )));
             }
-        }
+        })
     }
 
     // Always return "wal" as the current journal mode

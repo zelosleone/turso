@@ -10,6 +10,7 @@ use std::collections::{HashMap, HashSet};
 use std::fmt::{self, Debug, Display};
 use std::sync::Arc;
 use std::sync::Mutex;
+use turso_macros::match_ignore_ascii_case;
 
 /// Tracks computation counts to verify incremental behavior (for tests now), and in the future
 /// should be used to provide statistics.
@@ -936,8 +937,9 @@ impl ProjectOperator {
                 }
             }
             Expr::FunctionCall { name, args, .. } => {
-                match name.as_str().to_lowercase().as_str() {
-                    "hex" => {
+                let name_bytes = name.as_str().as_bytes();
+                match_ignore_ascii_case!(match name_bytes {
+                    b"hex" => {
                         if args.len() == 1 {
                             let arg_val = self.evaluate_expression(&args[0], values);
                             match arg_val {
@@ -949,7 +951,7 @@ impl ProjectOperator {
                         }
                     }
                     _ => Value::Null, // Other functions not supported yet
-                }
+                })
             }
             Expr::Parenthesized(inner) => {
                 assert!(

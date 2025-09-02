@@ -20,7 +20,9 @@ use crate::result::LimboResult;
 use crate::storage::btree::BTreeCursor;
 use crate::translate::collate::CollationSeq;
 use crate::translate::plan::SelectPlan;
-use crate::util::{module_args_from_sql, module_name_from_sql, IOExt, UnparsedFromSqlIndex};
+use crate::util::{
+    module_args_from_sql, module_name_from_sql, type_from_name, IOExt, UnparsedFromSqlIndex,
+};
 use crate::{return_if_io, LimboError, MvCursor, Pager, RefValue, SymbolTable, VirtualTable};
 use crate::{util::normalize_ident, Result};
 use core::fmt;
@@ -904,37 +906,10 @@ fn create_table(
 
                 let mut typename_exactly_integer = false;
                 let ty = match col_type {
-                    Some(data_type) => 'ty: {
-                        // https://www.sqlite.org/datatype3.html
-                        let mut type_name = data_type.name.clone();
-                        type_name.make_ascii_uppercase();
-
-                        if type_name.is_empty() {
-                            break 'ty Type::Blob;
-                        }
-
-                        if type_name == "INTEGER" {
-                            typename_exactly_integer = true;
-                            break 'ty Type::Integer;
-                        }
-
-                        if let Some(ty) = type_name.as_bytes().windows(3).find_map(|s| match s {
-                            b"INT" => Some(Type::Integer),
-                            _ => None,
-                        }) {
-                            break 'ty ty;
-                        }
-
-                        if let Some(ty) = type_name.as_bytes().windows(4).find_map(|s| match s {
-                            b"CHAR" | b"CLOB" | b"TEXT" => Some(Type::Text),
-                            b"BLOB" => Some(Type::Blob),
-                            b"REAL" | b"FLOA" | b"DOUB" => Some(Type::Real),
-                            _ => None,
-                        }) {
-                            break 'ty ty;
-                        }
-
-                        Type::Numeric
+                    Some(data_type) => {
+                        let (ty, ei) = type_from_name(&data_type.name);
+                        typename_exactly_integer = ei;
+                        ty
                     }
                     None => Type::Null,
                 };
@@ -1101,28 +1076,7 @@ impl From<&ColumnDefinition> for Column {
         }
 
         let ty = match value.col_type {
-            Some(ref data_type) => {
-                // https://www.sqlite.org/datatype3.html
-                let type_name = data_type.name.clone().to_uppercase();
-
-                if type_name.contains("INT") {
-                    Type::Integer
-                } else if type_name.contains("CHAR")
-                    || type_name.contains("CLOB")
-                    || type_name.contains("TEXT")
-                {
-                    Type::Text
-                } else if type_name.contains("BLOB") || type_name.is_empty() {
-                    Type::Blob
-                } else if type_name.contains("REAL")
-                    || type_name.contains("FLOA")
-                    || type_name.contains("DOUB")
-                {
-                    Type::Real
-                } else {
-                    Type::Numeric
-                }
-            }
+            Some(ref data_type) => type_from_name(&data_type.name).0,
             None => Type::Null,
         };
 
