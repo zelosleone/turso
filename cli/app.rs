@@ -66,6 +66,8 @@ pub struct Opts {
     pub experimental_views: bool,
     #[clap(long, help = "Enable experimental indexing feature")]
     pub experimental_indexes: Option<bool>,
+    #[clap(long, help = "Enable experimental strict schema mode")]
+    pub experimental_strict: bool,
     #[clap(short = 't', long, help = "specify output file for log traces")]
     pub tracing_output: Option<String>,
     #[clap(long, help = "Start MCP server instead of interactive shell")]
@@ -107,6 +109,7 @@ impl Limbo {
                 indexes_enabled,
                 opts.experimental_mvcc,
                 opts.experimental_views,
+                opts.experimental_strict,
             )?
         } else {
             let flags = if opts.readonly {
@@ -118,9 +121,11 @@ impl Limbo {
                 &db_file,
                 opts.vfs.as_ref(),
                 flags,
-                indexes_enabled,
-                opts.experimental_mvcc,
-                opts.experimental_views,
+                turso_core::DatabaseOpts::new()
+                    .with_mvcc(opts.experimental_mvcc)
+                    .with_indexes(indexes_enabled)
+                    .with_views(opts.experimental_views)
+                    .with_strict(opts.experimental_strict),
             )?;
             let conn = db.connect()?;
             (io, conn)

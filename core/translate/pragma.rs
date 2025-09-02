@@ -289,6 +289,7 @@ fn update_pragma(
                     true,
                     schema,
                     syms,
+                    &connection,
                     program,
                 )?;
             }
