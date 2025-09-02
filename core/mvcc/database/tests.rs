@@ -1285,7 +1285,7 @@ fn test_concurrent_writes() {
                 println!("inserting row {write} from connection {conn_id}");
                 conn.current_statement = Some(
                     conn.conn
-                        .prepare(&format!("INSERT INTO test (x) VALUES ({write})"))
+                        .prepare(format!("INSERT INTO test (x) VALUES ({write})"))
                         .unwrap(),
                 );
             }

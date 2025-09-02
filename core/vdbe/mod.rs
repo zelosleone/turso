@@ -40,7 +40,7 @@ use crate::{
         },
         metrics::StatementMetrics,
     },
-     IOExt, RefValue,
+    IOExt, RefValue,
 };
 
 use crate::{
@@ -214,6 +214,7 @@ impl<const N: usize> Bitfield<N> {
 }
 
 #[derive(Debug)]
+#[allow(clippy::large_enum_variant)]
 /// The commit state of the program.
 /// There are two states:
 /// - Ready: The program is ready to run the next instruction, or has shut down after
@@ -565,10 +566,10 @@ impl Program {
                     let state_machine = mv_store.commit_tx(*tx_id, pager.clone(), &conn).unwrap();
                     program_state.commit_state = CommitState::CommitingMvcc { state_machine };
                 }
-                let CommitState::CommitingMvcc { state_machine } =
-                    &mut program_state.commit_state else {
-                        panic!("invalid state for mvcc commit step")
-                    };
+                let CommitState::CommitingMvcc { state_machine } = &mut program_state.commit_state
+                else {
+                    panic!("invalid state for mvcc commit step")
+                };
                 match self.step_end_mvcc_txn(state_machine, mv_store)? {
                     IOResult::Done(_) => {
                         assert!(state_machine.is_finalized());
