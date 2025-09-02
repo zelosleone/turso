@@ -350,6 +350,13 @@ impl Value {
         }
     }
 
+    pub fn as_uint(&self) -> u64 {
+        match self {
+            Value::Integer(i) => (*i).cast_unsigned(),
+            _ => 0,
+        }
+    }
+
     pub fn from_text(text: &str) -> Self {
         Value::Text(Text::new(text))
     }
