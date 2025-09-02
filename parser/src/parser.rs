@@ -16,9 +16,6 @@ use crate::token::TokenType::{self, *};
 use crate::Result;
 use turso_macros::match_ignore_ascii_case;
 
-const TRUE_LIT: &str = "TRUE";
-const FALSE_LIT: &str = "FALSE";
-
 macro_rules! peek_expect {
     ( $parser:expr, $( $x:ident ),* $(,)?) => {
         {
@@ -1541,15 +1538,18 @@ impl<'a> Parser<'a> {
                     })))
                 } else {
                     match name {
-                        Name::Ident(s) => match s.as_str() {
-                            s if s.eq_ignore_ascii_case(TRUE_LIT) => {
-                                return Ok(Box::new(Expr::Literal(Literal::Numeric("1".into()))))
-                            }
-                            s if s.eq_ignore_ascii_case(FALSE_LIT) => {
-                                return Ok(Box::new(Expr::Literal(Literal::Numeric("0".into()))))
-                            }
-                            _ => return Ok(Box::new(Expr::Id(Name::Ident(s)))),
-                        },
+                        Name::Ident(s) => {
+                            let s_bytes = s.as_bytes();
+                            match_ignore_ascii_case!(match s_bytes {
+                                b"true" => {
+                                    Ok(Box::new(Expr::Literal(Literal::Numeric("1".into()))))
+                                }
+                                b"false" => {
+                                    Ok(Box::new(Expr::Literal(Literal::Numeric("0".into()))))
+                                }
+                                _ => return Ok(Box::new(Expr::Id(Name::Ident(s)))),
+                            })
+                        }
                         _ => Ok(Box::new(Expr::Id(name))),
                     }
                 }
