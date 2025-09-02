@@ -195,11 +195,7 @@ impl PageCache {
     }
 
     #[inline]
-    pub fn insert_ignore_existing(
-        &mut self,
-        key: PageCacheKey,
-        value: PageRef,
-    ) -> Result<(), CacheError> {
+    pub fn upsert_page(&mut self, key: PageCacheKey, value: PageRef) -> Result<(), CacheError> {
         self._insert(key, value, true)
     }
 
@@ -207,23 +203,35 @@ impl PageCache {
         &mut self,
         key: PageCacheKey,
         value: PageRef,
-        ignore_exists: bool,
+        update_in_place: bool,
     ) -> Result<(), CacheError> {
         trace!("insert(key={:?})", key);
         // Check first if page already exists in cache
-        if let Some(slot) = self.map.borrow().get(&key) {
-            if !ignore_exists {
-                let existing = self.entries.borrow()[slot]
-                    .page
-                    .as_ref()
-                    .expect("map points to empty slot")
-                    .clone();
-                turso_assert!(
-                    Arc::ptr_eq(&existing, &value),
-                    "Attempted to insert different page with same key: {key:?}"
-                );
-                return Err(CacheError::KeyExists);
+        let slot = { self.map.borrow().get(&key) };
+        if let Some(slot) = slot {
+            {
+                let existing = &mut self.entries.borrow_mut()[slot];
+                existing.ref_bit.set(true);
+                if update_in_place {
+                    // update it in place
+                    existing.page = Some(value);
+                } else {
+                    // the page we are inserting must match the existing page
+                    turso_assert!(
+                        Arc::ptr_eq(
+                            existing.page.as_ref().expect("map points to empty slot"),
+                            &value
+                        ),
+                        "Attempted to insert different page with same key: {key:?}"
+                    );
+                }
             }
+            self.move_to_front(slot);
+            return if update_in_place {
+                Ok(())
+            } else {
+                Err(CacheError::KeyExists)
+            };
         }
         // Key doesn't exist, proceed with new entry
         self.make_room_for(1)?;

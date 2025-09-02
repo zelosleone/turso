@@ -2090,13 +2090,11 @@ impl Pager {
 
         // FIXME: use specific page key for writer instead of max frame, this will make readers not conflict
         assert!(page.is_dirty());
-        cache
-            .insert_ignore_existing(page_key, page.clone())
-            .map_err(|e| {
-                LimboError::InternalError(format!(
-                    "Failed to insert loaded page {id} into cache: {e:?}"
-                ))
-            })?;
+        cache.upsert_page(page_key, page.clone()).map_err(|e| {
+            LimboError::InternalError(format!(
+                "Failed to insert loaded page {id} into cache: {e:?}"
+            ))
+        })?;
         page.set_loaded();
         Ok(())
     }
