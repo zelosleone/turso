@@ -58,7 +58,12 @@ impl RoundToPrecision for f64 {
 }
 
 // https://sqlite.org/lang_keywords.html
-const QUOTE_PAIRS: &[(char, char)] = &[('"', '"'), ('[', ']'), ('`', '`')];
+const QUOTE_PAIRS: &[(char, char)] = &[
+    ('"', '"'),
+    ('[', ']'),
+    ('`', '`'),
+    ('\'', '\''), // string sometimes used as identifier quoting
+];
 
 pub fn normalize_ident(identifier: &str) -> String {
     let quote_pair = QUOTE_PAIRS
