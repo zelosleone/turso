@@ -21,10 +21,7 @@ use crate::{
     SimulatorEnv,
     generation::Shadow,
     model::Query,
-    runner::{
-        env::{SimConnection, SimulationType, SimulatorTables},
-        io::SimulatorIO,
-    },
+    runner::env::{SimConnection, SimulationType, SimulatorTables},
 };
 
 use super::property::{Property, remaining};
@@ -452,7 +449,7 @@ impl Shadow for Interaction {
     }
 }
 impl Interaction {
-    pub(crate) fn execute_query(&self, conn: &mut Arc<Connection>, _io: &SimulatorIO) -> ResultSet {
+    pub(crate) fn execute_query(&self, conn: &mut Arc<Connection>) -> ResultSet {
         if let Self::Query(query) = self {
             let query_str = query.to_string();
             let rows = conn.query(&query_str);
@@ -611,13 +608,7 @@ impl Interaction {
                         out.push(r);
                     }
                     StepResult::IO => {
-                        let syncing = {
-                            let files = env.io.files.borrow();
-                            // TODO: currently assuming we only have 1 file that is syncing
-                            files
-                                .iter()
-                                .any(|file| file.sync_completion.borrow().is_some())
-                        };
+                        let syncing = env.io.syncing();
                         if syncing {
                             reopen_database(env);
                         } else {
@@ -666,12 +657,7 @@ impl Interaction {
             let mut current_prob = 0.05;
             let mut incr = 0.001;
             loop {
-                let syncing = {
-                    let files = env.io.files.borrow();
-                    files
-                        .iter()
-                        .any(|file| file.sync_completion.borrow().is_some())
-                };
+                let syncing = env.io.syncing();
                 let inject_fault = env.rng.random_bool(current_prob);
                 // TODO: avoid for now injecting faults when syncing
                 if inject_fault && !syncing {
@@ -722,7 +708,7 @@ fn reopen_database(env: &mut SimulatorEnv) {
 
     // Clear all open files
     // TODO: for correct reporting of faults we should get all the recorded numbers and transfer to the new file
-    env.io.files.borrow_mut().clear();
+    env.io.close_files();
 
     // 2. Re-open database
     match env.type_ {

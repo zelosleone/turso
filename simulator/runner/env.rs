@@ -12,7 +12,9 @@ use sql_generation::model::table::Table;
 use turso_core::Database;
 
 use crate::profiles::Profile;
+use crate::runner::SimIO;
 use crate::runner::io::SimulatorIO;
+use crate::runner::memory::io::MemorySimIO;
 
 use super::cli::SimulatorCLI;
 
@@ -63,13 +65,14 @@ pub(crate) struct SimulatorEnv {
     pub(crate) opts: SimulatorOpts,
     pub profile: Profile,
     pub(crate) connections: Vec<SimConnection>,
-    pub(crate) io: Arc<SimulatorIO>,
+    pub(crate) io: Arc<dyn SimIO>,
     pub(crate) db: Option<Arc<Database>>,
     pub(crate) rng: ChaCha8Rng,
     pub(crate) paths: Paths,
     pub(crate) type_: SimulationType,
     pub(crate) phase: SimulationPhase,
     pub(crate) tables: SimulatorTables,
+    pub memory_io: bool,
 }
 
 impl UnwindSafe for SimulatorEnv {}
@@ -88,6 +91,7 @@ impl SimulatorEnv {
             paths: self.paths.clone(),
             type_: self.type_,
             phase: self.phase,
+            memory_io: self.memory_io,
             profile: self.profile.clone(),
         }
     }
@@ -99,16 +103,26 @@ impl SimulatorEnv {
 
         let latency_prof = &self.profile.io.latency;
 
-        let io = Arc::new(
-            SimulatorIO::new(
+        let io: Arc<dyn SimIO> = if self.memory_io {
+            Arc::new(MemorySimIO::new(
                 self.opts.seed,
                 self.opts.page_size,
                 latency_prof.latency_probability,
                 latency_prof.min_tick,
                 latency_prof.max_tick,
+            ))
+        } else {
+            Arc::new(
+                SimulatorIO::new(
+                    self.opts.seed,
+                    self.opts.page_size,
+                    latency_prof.latency_probability,
+                    latency_prof.min_tick,
+                    latency_prof.max_tick,
+                )
+                .unwrap(),
             )
-            .unwrap(),
-        );
+        };
 
         // Remove existing database file
         let db_path = self.get_db_path();
@@ -282,16 +296,26 @@ impl SimulatorEnv {
 
         let latency_prof = &profile.io.latency;
 
-        let io = Arc::new(
-            SimulatorIO::new(
+        let io: Arc<dyn SimIO> = if cli_opts.memory_io {
+            Arc::new(MemorySimIO::new(
                 seed,
                 opts.page_size,
                 latency_prof.latency_probability,
                 latency_prof.min_tick,
                 latency_prof.max_tick,
+            ))
+        } else {
+            Arc::new(
+                SimulatorIO::new(
+                    seed,
+                    opts.page_size,
+                    latency_prof.latency_probability,
+                    latency_prof.min_tick,
+                    latency_prof.max_tick,
+                )
+                .unwrap(),
             )
-            .unwrap(),
-        );
+        };
 
         let db = match Database::open_file(
             io.clone(),
@@ -319,6 +343,7 @@ impl SimulatorEnv {
             db: Some(db),
             type_: simulation_type,
             phase: SimulationPhase::Test,
+            memory_io: cli_opts.memory_io,
             profile: profile.clone(),
         }
     }
