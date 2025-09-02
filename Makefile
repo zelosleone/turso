@@ -207,5 +207,6 @@ endif
 .PHONY: merge-pr
 
 sim-schema: 
+	mkdir -p  simulator/configs/custom
 	cargo run -p limbo_sim -- print-schema > simulator/configs/custom/profile-schema.json
 
