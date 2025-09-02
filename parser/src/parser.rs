@@ -15,6 +15,9 @@ use crate::lexer::{Lexer, Token};
 use crate::token::TokenType::{self, *};
 use crate::Result;
 
+const TRUE_LIT: &str = "TRUE";
+const FALSE_LIT: &str = "FALSE";
+
 macro_rules! peek_expect {
     ( $parser:expr, $( $x:ident ),* $(,)?) => {
         {
@@ -425,7 +428,8 @@ impl<'a> Parser<'a> {
                 }
                 TK_COLUMNKW => {
                     let prev_tt = self.current_token.token_type.unwrap_or(TK_EOF);
-                    let can_be_columnkw = matches!(prev_tt, TK_ADD | TK_RENAME | TK_DROP);
+                    let can_be_columnkw =
+                        matches!(prev_tt, TK_ADD | TK_RENAME | TK_DROP | TK_ALTER);
 
                     if !can_be_columnkw {
                         tok.token_type = Some(TK_ID);
@@ -1545,7 +1549,18 @@ impl<'a> Parser<'a> {
                         Name::Ident(s) => Literal::String(s),
                     })))
                 } else {
-                    Ok(Box::new(Expr::Id(name)))
+                    match name {
+                        Name::Ident(s) => match s.as_str() {
+                            s if s.eq_ignore_ascii_case(TRUE_LIT) => {
+                                return Ok(Box::new(Expr::Literal(Literal::Numeric("1".into()))))
+                            }
+                            s if s.eq_ignore_ascii_case(FALSE_LIT) => {
+                                return Ok(Box::new(Expr::Literal(Literal::Numeric("0".into()))))
+                            }
+                            _ => return Ok(Box::new(Expr::Id(Name::Ident(s)))),
+                        },
+                        _ => Ok(Box::new(Expr::Id(name))),
+                    }
                 }
             }
         }
@@ -3418,7 +3433,7 @@ impl<'a> Parser<'a> {
         Ok(result)
     }
 
-    fn parse_column_definition(&mut self, in_alter: bool) -> Result<ColumnDefinition> {
+    pub fn parse_column_definition(&mut self, in_alter: bool) -> Result<ColumnDefinition> {
         let col_name = self.parse_nm()?;
         if !in_alter && col_name.as_str().eq_ignore_ascii_case("rowid") {
             return Err(Error::Custom("cannot use reserved word: ROWID".to_owned()));
@@ -3437,7 +3452,7 @@ impl<'a> Parser<'a> {
         eat_assert!(self, TK_ALTER);
         eat_expect!(self, TK_TABLE);
         let tbl_name = self.parse_fullname(false)?;
-        let tok = eat_expect!(self, TK_ADD, TK_DROP, TK_RENAME);
+        let tok = eat_expect!(self, TK_ADD, TK_DROP, TK_RENAME, TK_ALTER);
 
         match tok.token_type.unwrap() {
             TK_ADD => {
@@ -3487,6 +3502,19 @@ impl<'a> Parser<'a> {
                         body: AlterTableBody::RenameTo(to_name),
                     }))
                 }
+            }
+            TK_ALTER => {
+                eat_expect!(self, TK_COLUMNKW);
+                let col_name = self.parse_nm()?;
+
+                eat_expect!(self, TK_TO);
+
+                let new = self.parse_column_definition(true)?;
+
+                Ok(Stmt::AlterTable(AlterTable {
+                    name: tbl_name,
+                    body: AlterTableBody::AlterColumn { old: col_name, new },
+                }))
             }
             _ => unreachable!(),
         }
@@ -9853,6 +9881,24 @@ mod tests {
                             },
                         ],
                     }),
+                }))],
+            ),
+            (
+                b"ALTER TABLE foo ALTER COLUMN bar TO baz INTEGER".as_slice(),
+                vec![Cmd::Stmt(Stmt::AlterTable (AlterTable {
+                    name: QualifiedName { db_name: None, name: Name::Ident("foo".to_owned()), alias: None },
+                    body: AlterTableBody::AlterColumn {
+                        old: Name::Ident("bar".to_owned()),
+                        new: ColumnDefinition {
+                            col_name: Name::Ident("baz".to_owned()),
+                            col_type: Some(Type {
+                                name: "INTEGER".to_owned(),
+                                size: None,
+                            }),
+                            constraints: vec![],
+                        },
+
+                    },
                 }))],
             ),
             // parse create index

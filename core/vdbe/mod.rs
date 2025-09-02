@@ -229,6 +229,13 @@ pub enum Register {
     Record(ImmutableRecord),
 }
 
+impl Register {
+    #[inline]
+    pub fn is_null(&self) -> bool {
+        matches!(self, Register::Value(Value::Null))
+    }
+}
+
 /// A row is a the list of registers that hold the values for a filtered row. This row is a pointer, therefore
 /// after stepping again, row will be invalidated to be sure it doesn't point to somewhere unexpected.
 #[derive(Debug)]
@@ -452,6 +459,11 @@ impl Program {
             if let Some(io) = &state.io_completions {
                 if !io.finished() {
                     return Ok(StepResult::IO);
+                }
+                if let Some(err) = io.get_error() {
+                    let err = err.into();
+                    handle_program_error(&pager, &self.connection, &err)?;
+                    return Err(err);
                 }
                 state.io_completions = None;
             }

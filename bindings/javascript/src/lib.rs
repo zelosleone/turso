@@ -569,7 +569,7 @@ impl turso_core::DatabaseStorage for DatabaseFile {
     fn read_page(
         &self,
         page_idx: usize,
-        _encryption_ctx: Option<&turso_core::EncryptionContext>,
+        _io_ctx: &turso_core::IOContext,
         c: turso_core::Completion,
     ) -> turso_core::Result<turso_core::Completion> {
         let r = c.as_read();
@@ -578,7 +578,7 @@ impl turso_core::DatabaseStorage for DatabaseFile {
         if !(512..=65536).contains(&size) || size & (size - 1) != 0 {
             return Err(turso_core::LimboError::NotADB);
         }
-        let pos = (page_idx - 1) * size;
+        let pos = (page_idx as u64 - 1) * size as u64;
         self.file.pread(pos, c)
     }
 
@@ -586,11 +586,11 @@ impl turso_core::DatabaseStorage for DatabaseFile {
         &self,
         page_idx: usize,
         buffer: Arc<turso_core::Buffer>,
-        _encryption_ctx: Option<&turso_core::EncryptionContext>,
+        _io_ctx: &turso_core::IOContext,
         c: turso_core::Completion,
     ) -> turso_core::Result<turso_core::Completion> {
         let size = buffer.len();
-        let pos = (page_idx - 1) * size;
+        let pos = (page_idx as u64 - 1) * size as u64;
         self.file.pwrite(pos, buffer, c)
     }
 
@@ -599,10 +599,10 @@ impl turso_core::DatabaseStorage for DatabaseFile {
         first_page_idx: usize,
         page_size: usize,
         buffers: Vec<Arc<turso_core::Buffer>>,
-        _encryption_ctx: Option<&turso_core::EncryptionContext>,
+        _io_ctx: &turso_core::IOContext,
         c: turso_core::Completion,
     ) -> turso_core::Result<turso_core::Completion> {
-        let pos = first_page_idx.saturating_sub(1) * page_size;
+        let pos = first_page_idx.saturating_sub(1) as u64 * page_size as u64;
         let c = self.file.pwritev(pos, buffers, c)?;
         Ok(c)
     }
@@ -620,7 +620,7 @@ impl turso_core::DatabaseStorage for DatabaseFile {
         len: usize,
         c: turso_core::Completion,
     ) -> turso_core::Result<turso_core::Completion> {
-        let c = self.file.truncate(len, c)?;
+        let c = self.file.truncate(len as u64, c)?;
         Ok(c)
     }
 }

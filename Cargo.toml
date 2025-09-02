@@ -4,7 +4,6 @@
 resolver = "2"
 members = [
     "bindings/dart/rust",
-    "bindings/go",
     "bindings/java",
     "bindings/javascript",
     "bindings/python",
@@ -34,29 +33,29 @@ members = [
 exclude = ["perf/latency/limbo"]
 
 [workspace.package]
-version = "0.1.4"
+version = "0.1.5-pre.2"
 authors = ["the Limbo authors"]
 edition = "2021"
 license = "MIT"
 repository = "https://github.com/tursodatabase/turso"
 
 [workspace.dependencies]
-turso = { path = "bindings/rust", version = "0.1.4" }
-turso_node = { path = "bindings/javascript", version = "0.1.4" }
-limbo_completion = { path = "extensions/completion", version = "0.1.4" }
-turso_core = { path = "core", version = "0.1.4" }
-turso_sync_engine = { path = "sync/engine", version = "0.1.4" }
-limbo_crypto = { path = "extensions/crypto", version = "0.1.4" }
-limbo_csv = { path = "extensions/csv", version = "0.1.4" }
-turso_ext = { path = "extensions/core", version = "0.1.4" }
-turso_ext_tests = { path = "extensions/tests", version = "0.1.4" }
-limbo_ipaddr = { path = "extensions/ipaddr", version = "0.1.4" }
-turso_macros = { path = "macros", version = "0.1.4" }
-limbo_percentile = { path = "extensions/percentile", version = "0.1.4" }
-limbo_regexp = { path = "extensions/regexp", version = "0.1.4" }
-turso_sqlite3_parser = { path = "vendored/sqlite3-parser", version = "0.1.4" }
-limbo_uuid = { path = "extensions/uuid", version = "0.1.4" }
-turso_parser = { path = "parser" }
+turso = { path = "bindings/rust", version = "0.1.5-pre.2" }
+turso_node = { path = "bindings/javascript", version = "0.1.5-pre.2" }
+limbo_completion = { path = "extensions/completion", version = "0.1.5-pre.2" }
+turso_core = { path = "core", version = "0.1.5-pre.2" }
+turso_sync_engine = { path = "sync/engine", version = "0.1.5-pre.2" }
+limbo_crypto = { path = "extensions/crypto", version = "0.1.5-pre.2" }
+limbo_csv = { path = "extensions/csv", version = "0.1.5-pre.2" }
+turso_ext = { path = "extensions/core", version = "0.1.5-pre.2" }
+turso_ext_tests = { path = "extensions/tests", version = "0.1.5-pre.2" }
+limbo_ipaddr = { path = "extensions/ipaddr", version = "0.1.5-pre.2" }
+turso_macros = { path = "macros", version = "0.1.5-pre.2" }
+limbo_percentile = { path = "extensions/percentile", version = "0.1.5-pre.2" }
+limbo_regexp = { path = "extensions/regexp", version = "0.1.5-pre.2" }
+turso_sqlite3_parser = { path = "vendored/sqlite3-parser", version = "0.1.5-pre.2" }
+limbo_uuid = { path = "extensions/uuid", version = "0.1.5-pre.2" }
+turso_parser = { path = "parser", version = "0.1.5-pre.2"  }
 sql_generation = { path = "sql_generation" }
 strum = { version = "0.26", features = ["derive"] }
 strum_macros = "0.26"
@@ -68,6 +67,8 @@ rusqlite = { version = "0.37.0", features = ["bundled"] }
 itertools = "0.14.0"
 rand = "0.9.2"
 tracing = "0.1.41"
+schemars = "1.0.4"
+garde = "0.22"
 
 [profile.release]
 debug = "line-tables-only"

@@ -973,6 +973,8 @@ pub enum AlterTableBody {
     RenameTo(Name),
     /// `ADD COLUMN`
     AddColumn(ColumnDefinition), // TODO distinction between ADD and ADD COLUMN
+    /// `ALTER COLUMN`
+    AlterColumn { old: Name, new: ColumnDefinition },
     /// `RENAME COLUMN`
     RenameColumn {
         /// old name
@@ -1345,6 +1347,8 @@ pub enum PragmaName {
     QueryOnly,
     /// Returns schema version of the database file.
     SchemaVersion,
+    /// Control database synchronization mode (OFF | FULL | NORMAL | EXTRA)
+    Synchronous,
     /// returns information about the columns of a table
     TableInfo,
     /// enable capture-changes logic for the connection

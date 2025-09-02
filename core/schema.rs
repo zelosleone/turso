@@ -157,6 +157,15 @@ impl Schema {
             .unwrap_or_default()
     }
 
+    /// Get all materialized views that depend on a given table, skip normalizing ident.
+    /// We are basically assuming we already normalized the ident.
+    pub fn get_dependent_materialized_views_unnormalized(
+        &self,
+        table_name: &str,
+    ) -> Option<&Vec<String>> {
+        self.table_to_materialized_views.get(table_name)
+    }
+
     /// Populate all materialized views by scanning their source tables
     /// Returns IOResult to support async execution
     pub fn populate_materialized_views(
@@ -1063,8 +1072,8 @@ impl Column {
 }
 
 // TODO: This might replace some of util::columns_from_create_table_body
-impl From<ColumnDefinition> for Column {
-    fn from(value: ColumnDefinition) -> Self {
+impl From<&ColumnDefinition> for Column {
+    fn from(value: &ColumnDefinition) -> Self {
         let name = value.col_name.as_str();
 
         let mut default = None;
@@ -1073,13 +1082,13 @@ impl From<ColumnDefinition> for Column {
         let mut unique = false;
         let mut collation = None;
 
-        for ast::NamedColumnConstraint { constraint, .. } in value.constraints {
+        for ast::NamedColumnConstraint { constraint, .. } in &value.constraints {
             match constraint {
                 ast::ColumnConstraint::PrimaryKey { .. } => primary_key = true,
                 ast::ColumnConstraint::NotNull { .. } => notnull = true,
                 ast::ColumnConstraint::Unique(..) => unique = true,
                 ast::ColumnConstraint::Default(expr) => {
-                    default.replace(expr);
+                    default.replace(expr.clone());
                 }
                 ast::ColumnConstraint::Collate { collation_name } => {
                     collation.replace(
@@ -1119,11 +1128,14 @@ impl From<ColumnDefinition> for Column {
 
         let ty_str = value
             .col_type
+            .as_ref()
             .map(|t| t.name.to_string())
             .unwrap_or_default();
 
+        let hidden = ty_str.contains("HIDDEN");
+
         Column {
-            name: Some(name.to_string()),
+            name: Some(normalize_ident(name)),
             ty,
             default,
             notnull,
@@ -1132,7 +1144,7 @@ impl From<ColumnDefinition> for Column {
             is_rowid_alias: primary_key && matches!(ty, Type::Integer),
             unique,
             collation,
-            hidden: false,
+            hidden,
         }
     }
 }
