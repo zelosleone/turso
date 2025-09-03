@@ -135,6 +135,7 @@ struct CompletionInner {
     /// None means we completed successfully
     // Thread safe with OnceLock
     result: std::sync::OnceLock<Option<CompletionError>>,
+    needs_link: bool,
 }
 
 impl Debug for CompletionType {
@@ -161,8 +162,32 @@ impl Completion {
             inner: Arc::new(CompletionInner {
                 completion_type,
                 result: OnceLock::new(),
+                needs_link: false,
             }),
         }
+    }
+
+    pub fn new_linked(completion_type: CompletionType) -> Self {
+        Self {
+            inner: Arc::new(CompletionInner {
+                completion_type,
+                result: OnceLock::new(),
+                needs_link: true,
+            }),
+        }
+    }
+
+    pub fn needs_link(&self) -> bool {
+        self.inner.needs_link
+    }
+
+    pub fn new_write_linked<F>(complete: F) -> Self
+    where
+        F: Fn(Result<i32, CompletionError>) + 'static,
+    {
+        Self::new_linked(CompletionType::Write(WriteCompletion::new(Box::new(
+            complete,
+        ))))
     }
 
     pub fn new_write<F>(complete: F) -> Self
