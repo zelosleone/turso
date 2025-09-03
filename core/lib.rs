@@ -63,7 +63,6 @@ pub use io::{
 };
 use parking_lot::RwLock;
 use schema::Schema;
-use turso_macros::match_ignore_ascii_case;
 use std::{
     borrow::Cow,
     cell::{Cell, RefCell, UnsafeCell},
@@ -91,6 +90,7 @@ pub use storage::{
 };
 use tracing::{instrument, Level};
 use translate::select::prepare_select_plan;
+use turso_macros::match_ignore_ascii_case;
 use turso_parser::{ast, ast::Cmd, parser::Parser};
 use types::IOResult;
 pub use types::RefValue;
