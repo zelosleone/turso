@@ -20,7 +20,7 @@ type SlotIndex = usize;
 
 const NULL: SlotIndex = usize::MAX;
 
-#[derive(Clone, Ord, Eq, PartialOrd, PartialEq, Copy, Debug)]
+#[derive(Clone, Copy, Debug)]
 /// To distinguish between a page touched by a scan vs a 'hot' page,
 /// we use a Reference Bit with 4 states, incrementing this bit up to a maximum
 /// of 3 on each access, and decrementing on each eviction scan pass.
@@ -533,7 +533,7 @@ impl PageCache {
                 let entries = &mut self.entries;
                 let s = &mut entries[tail_idx];
                 turso_assert!(s.page.is_some(), "tail points to empty slot");
-                (s.decrement_ref() != RefBit::Clear, s.key)
+                (!matches!(s.decrement_ref(), RefBit::Clear), s.key)
             };
 
             examined += 1;
@@ -1638,7 +1638,7 @@ mod tests {
         for _ in 0..3 {
             assert!(c.get(&k2).unwrap().is_some());
         }
-        assert_eq!(c.ref_of(&k2), Some(RefBit::Max));
+        assert!(matches!(c.ref_of(&k2), Some(RefBit::Max)));
 
         // Now simulate a scan inserting new pages 5..10 (one-hit wonders).
         for id in 5..=10 {
@@ -1670,7 +1670,7 @@ mod tests {
 
         // Shrink to 3 (one page will be evicted during repack/next insert)
         assert_eq!(c.resize(3), CacheResizeResult::Done);
-        assert_eq!(c.ref_of(&k2), r_before);
+        assert!(matches!(c.ref_of(&k2), r_before));
 
         // Force an eviction; hot k2 should survive more passes.
         let _ = insert_page(&mut c, 5);
