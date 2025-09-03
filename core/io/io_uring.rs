@@ -1,10 +1,10 @@
 #![allow(clippy::arc_with_non_send_sync)]
 
 use super::{common, Completion, CompletionInner, File, OpenFlags, IO};
-use crate::fast_lock::SpinLock;
 use crate::io::clock::{Clock, Instant};
 use crate::storage::wal::CKPT_BATCH_PAGES;
 use crate::{turso_assert, LimboError, Result};
+use parking_lot::Mutex;
 use rustix::fs::{self, FlockOperation, OFlags};
 use std::ptr::NonNull;
 use std::{
@@ -44,7 +44,7 @@ const MAX_WAIT: usize = 4;
 const ARENA_COUNT: usize = 2;
 
 pub struct UringIO {
-    inner: Arc<SpinLock<InnerUringIO>>,
+    inner: Arc<Mutex<InnerUringIO>>,
 }
 
 unsafe impl Send for UringIO {}
@@ -128,7 +128,7 @@ impl UringIO {
         };
         debug!("Using IO backend 'io-uring'");
         Ok(Self {
-            inner: Arc::new(SpinLock::new(inner)),
+            inner: Arc::new(Mutex::new(inner)),
         })
     }
 }
@@ -584,7 +584,7 @@ fn completion_from_key(key: u64) -> Completion {
 }
 
 pub struct UringFile {
-    io: Arc<SpinLock<InnerUringIO>>,
+    io: Arc<Mutex<InnerUringIO>>,
     file: std::fs::File,
     id: Option<u32>,
 }
