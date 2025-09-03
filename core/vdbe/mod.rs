@@ -559,9 +559,12 @@ impl Program {
                 let mut mv_transactions = conn.mv_transactions.borrow_mut();
                 if matches!(program_state.commit_state, CommitState::Ready) {
                     assert!(
-                        mv_transactions.len() == 1,
-                        "for now we only support one mv transaction in single connection"
+                        mv_transactions.len() <= 1,
+                        "for now we only support one mv transaction in single connection, {mv_transactions:?}",
                     );
+                    if mv_transactions.is_empty() {
+                        return Ok(IOResult::Done(()));
+                    }
                     let tx_id = mv_transactions.first().unwrap();
                     let state_machine = mv_store.commit_tx(*tx_id, pager.clone(), &conn).unwrap();
                     program_state.commit_state = CommitState::CommitingMvcc { state_machine };
@@ -575,7 +578,9 @@ impl Program {
                         assert!(state_machine.is_finalized());
                         conn.mv_tx_id.set(None);
                         conn.transaction_state.replace(TransactionState::None);
+                        program_state.commit_state = CommitState::Ready;
                         mv_transactions.clear();
+                        return Ok(IOResult::Done(()));
                     }
                     IOResult::IO(io) => {
                         return Ok(IOResult::IO(io));
