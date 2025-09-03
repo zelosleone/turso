@@ -466,6 +466,13 @@ impl OngoingCheckpoint {
     }
 
     #[inline]
+    fn is_final_write(&self) -> bool {
+        self.current_page as usize >= self.pages_to_checkpoint.len()
+            && self.inflight_reads.is_empty()
+            && !self.pending_writes.is_empty()
+    }
+
+    #[inline]
     /// Whether or not new reads should be issued during checkpoint processing.
     fn should_issue_reads(&self) -> bool {
         (self.current_page as usize) < self.pages_to_checkpoint.len()
@@ -1510,7 +1517,7 @@ impl Wal for WalFile {
         // single completion for the whole batch
         let total_len: i32 = iovecs.iter().map(|b| b.len() as i32).sum();
         let page_frame_for_cb = page_frame_and_checksum.clone();
-        let c = Completion::new_write(move |res: Result<i32, CompletionError>| {
+        let cmp = move |res: Result<i32, CompletionError>| {
             let Ok(bytes_written) = res else {
                 return;
             };
@@ -1523,7 +1530,13 @@ impl Wal for WalFile {
                 page.clear_dirty();
                 page.set_wal_tag(*fid, seq);
             }
-        });
+        };
+
+        let c = if db_size_on_commit.is_some() {
+            Completion::new_write_linked(cmp)
+        } else {
+            Completion::new_write(cmp)
+        };
 
         let c = self.get_shared().file.pwritev(start_off, iovecs, c)?;
         Ok(c)
@@ -1821,7 +1834,10 @@ impl WalFile {
                         let batch_map = self.ongoing_checkpoint.pending_writes.take();
                         if !batch_map.is_empty() {
                             let done_flag = self.ongoing_checkpoint.add_write();
-                            completions.extend(write_pages_vectored(pager, batch_map, done_flag)?);
+                            let is_final = self.ongoing_checkpoint.is_final_write();
+                            completions.extend(write_pages_vectored(
+                                pager, batch_map, done_flag, is_final,
+                            )?);
                         }
                     }
 
