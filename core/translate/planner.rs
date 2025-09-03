@@ -10,6 +10,7 @@ use super::{
     select::prepare_select_plan,
     SymbolTable,
 };
+use crate::function::{AggFunc, ExtFunc};
 use crate::translate::expr::WalkControl;
 use crate::{
     function::Func,
@@ -30,18 +31,12 @@ pub const ROWID: &str = "rowid";
 
 pub fn resolve_aggregates(
     schema: &Schema,
+    syms: &SymbolTable,
     top_level_expr: &Expr,
     aggs: &mut Vec<Aggregate>,
 ) -> Result<bool> {
     let mut contains_aggregates = false;
     walk_expr(top_level_expr, &mut |expr: &Expr| -> Result<WalkControl> {
-        if aggs
-            .iter()
-            .any(|a| exprs_are_equivalent(&a.original_expr, expr))
-        {
-            contains_aggregates = true;
-            return Ok(WalkControl::Continue);
-        }
         match expr {
             Expr::FunctionCall {
                 name,
@@ -61,27 +56,42 @@ pub fn resolve_aggregates(
                     );
                 }
                 let args_count = args.len();
+                let distinctness = Distinctness::from_ast(distinctness.as_ref());
+
+                if !schema.indexes_enabled() && distinctness.is_distinct() {
+                    crate::bail_parse_error!(
+                        "SELECT with DISTINCT is not allowed without indexes enabled"
+                    );
+                }
+                if distinctness.is_distinct() && args_count != 1 {
+                    crate::bail_parse_error!(
+                        "DISTINCT aggregate functions must have exactly one argument"
+                    );
+                }
                 match Func::resolve_function(name.as_str(), args_count) {
                     Ok(Func::Agg(f)) => {
-                        let distinctness = Distinctness::from_ast(distinctness.as_ref());
-                        if !schema.indexes_enabled() && distinctness.is_distinct() {
-                            crate::bail_parse_error!(
-                                "SELECT with DISTINCT is not allowed without indexes enabled"
-                            );
-                        }
-                        if distinctness.is_distinct() && args.len() != 1 {
-                            crate::bail_parse_error!(
-                                "DISTINCT aggregate functions must have exactly one argument"
-                            );
-                        }
-                        aggs.push(Aggregate::new(f, args, expr, distinctness));
+                        add_aggregate_if_not_exists(aggs, expr, args, distinctness, f);
                         contains_aggregates = true;
+                        return Ok(WalkControl::SkipChildren);
                     }
-                    _ => {
-                        for arg in args.iter() {
-                            contains_aggregates |= resolve_aggregates(schema, arg, aggs)?;
+                    Err(e) => {
+                        if let Some(f) = syms.resolve_function(name.as_str(), args_count) {
+                            if let ExtFunc::Aggregate { .. } = f.as_ref().func {
+                                add_aggregate_if_not_exists(
+                                    aggs,
+                                    expr,
+                                    args,
+                                    distinctness,
+                                    AggFunc::External(f.func.clone().into()),
+                                );
+                                contains_aggregates = true;
+                                return Ok(WalkControl::SkipChildren);
+                            }
+                        } else {
+                            return Err(e);
                         }
                     }
+                    _ => {}
                 }
             }
             Expr::FunctionCallStar { name, filter_over } => {
@@ -90,9 +100,26 @@ pub fn resolve_aggregates(
                         "FILTER clause is not supported yet in aggregate functions"
                     );
                 }
-                if let Ok(Func::Agg(f)) = Func::resolve_function(name.as_str(), 0) {
-                    aggs.push(Aggregate::new(f, &[], expr, Distinctness::NonDistinct));
-                    contains_aggregates = true;
+                match Func::resolve_function(name.as_str(), 0) {
+                    Ok(Func::Agg(f)) => {
+                        add_aggregate_if_not_exists(aggs, expr, &[], Distinctness::NonDistinct, f);
+                        contains_aggregates = true;
+                        return Ok(WalkControl::SkipChildren);
+                    }
+                    Ok(_) => {
+                        crate::bail_parse_error!("Invalid aggregate function: {}", name.as_str());
+                    }
+                    Err(e) => match e {
+                        crate::LimboError::ParseError(e) => {
+                            crate::bail_parse_error!("{}", e);
+                        }
+                        _ => {
+                            crate::bail_parse_error!(
+                                "Invalid aggregate function: {}",
+                                name.as_str()
+                            );
+                        }
+                    },
                 }
             }
             _ => {}
@@ -102,6 +129,21 @@ pub fn resolve_aggregates(
     })?;
 
     Ok(contains_aggregates)
+}
+
+fn add_aggregate_if_not_exists(
+    aggs: &mut Vec<Aggregate>,
+    expr: &Expr,
+    args: &[Box<Expr>],
+    distinctness: Distinctness,
+    func: AggFunc,
+) {
+    if aggs
+        .iter()
+        .all(|a| !exprs_are_equivalent(&a.original_expr, expr))
+    {
+        aggs.push(Aggregate::new(func, args, expr, distinctness));
+    }
 }
 
 pub fn bind_column_references(
