@@ -1171,7 +1171,7 @@ impl Pager {
         tracing::trace!("read_page(page_idx = {})", page_idx);
         let mut page_cache = self.page_cache.write();
         let page_key = PageCacheKey::new(page_idx);
-        Ok(page_cache.get(&page_key)?)
+        page_cache.get(&page_key)
     }
 
     /// Get a page from cache only if it matches the target frame

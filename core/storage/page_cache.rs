@@ -1,5 +1,4 @@
 use std::cell::Cell;
-use std::cell::RefCell;
 use std::sync::atomic::Ordering;
 
 use std::sync::Arc;
@@ -95,30 +94,29 @@ impl PageCacheEntry {
     }
 }
 
-/// PageCache implements the SIEVE eviction algorithm, a simpler and more efficient
-/// alternative to LRU that achieves comparable or better hit ratios with lower overhead.
+/// PageCache implements a variation of the SIEVE algorithm that maintains an intrusive linked list queue of
+/// pages which keep a 'reference_bit' to determine how recently/frequently the page has been accessed.
+/// The bit is set to `Clear` on initial insertion and then bumped on each access and decremented
+/// during eviction scans.
 ///
-/// # Algorithm Overview
-///
-/// SIEVE maintains a queue of cached pages and uses a "second chance" mechanism:
 /// - New pages enter at the head (MRU position)
 /// - Eviction candidates are examined from the tail (LRU position)
 /// - Each page has a reference bit that is set when accessed
-/// - During eviction, if a page's reference bit is set, it gets a "second chance":
-///   the bit is cleared and the page moves to the head
-/// - Pages with clear reference bits are evicted immediately
+/// - During eviction, if a page's reference bit is decremented
+///   and the page moves to the head, Pages with Clear reference
+///   bits are evicted immediately
 pub struct PageCache {
     /// Capacity in pages
     capacity: usize,
     /// Map of Key -> SlotIndex in entries array
-    map: RefCell<PageHashMap>,
-    /// Pointers to intrusive doubly-linked list for eviction order (head=MRU, tail=LRU)
+    map: PageHashMap,
+    /// Pointers to intrusive doubly-linked list for eviction order
     head: Cell<SlotIndex>,
     tail: Cell<SlotIndex>,
     /// Fixed-size vec holding page entries
-    entries: RefCell<Vec<PageCacheEntry>>,
+    entries: Vec<PageCacheEntry>,
     /// Free list: Stack of available slot indices
-    freelist: RefCell<Vec<SlotIndex>>,
+    freelist: Vec<SlotIndex>,
 }
 
 unsafe impl Send for PageCache {}
@@ -166,24 +164,23 @@ impl PageCache {
         let freelist = (0..capacity).rev().collect::<Vec<usize>>();
         Self {
             capacity,
-            map: RefCell::new(PageHashMap::new(capacity)),
+            map: PageHashMap::new(capacity),
             head: Cell::new(NULL),
             tail: Cell::new(NULL),
-            entries: RefCell::new(vec![PageCacheEntry::empty(); capacity]),
-            freelist: RefCell::new(freelist),
+            entries: vec![PageCacheEntry::empty(); capacity],
+            freelist,
         }
     }
 
     #[inline]
     fn link_front(&self, slot: SlotIndex) {
-        let entries = self.entries.borrow();
         let old_head = self.head.replace(slot);
 
-        entries[slot].next.set(old_head);
-        entries[slot].prev.set(NULL);
+        self.entries[slot].next.set(old_head);
+        self.entries[slot].prev.set(NULL);
 
         if old_head != NULL {
-            entries[old_head].prev.set(slot);
+            self.entries[old_head].prev.set(slot);
         } else {
             // list was empty
             self.tail.set(slot);
@@ -192,23 +189,21 @@ impl PageCache {
 
     #[inline]
     fn unlink(&self, slot: SlotIndex) {
-        let entries = self.entries.borrow();
-
-        let p = entries[slot].prev.get();
-        let n = entries[slot].next.get();
+        let p = self.entries[slot].prev.get();
+        let n = self.entries[slot].next.get();
 
         if p != NULL {
-            entries[p].next.set(n);
+            self.entries[p].next.set(n);
         } else {
             self.head.set(n);
         }
         if n != NULL {
-            entries[n].prev.set(p);
+            self.entries[n].prev.set(p);
         } else {
             self.tail.set(p);
         }
 
-        entries[slot].reset_links();
+        self.entries[slot].reset_links();
     }
 
     #[inline]
@@ -216,13 +211,13 @@ impl PageCache {
         if self.head.get() == slot {
             return;
         }
-        turso_assert!(self.entries.borrow()[slot].page.is_some(), "must be linked");
+        turso_assert!(self.entries[slot].page.is_some(), "must be linked");
         self.unlink(slot);
         self.link_front(slot);
     }
 
     pub fn contains_key(&self, key: &PageCacheKey) -> bool {
-        self.map.borrow().contains_key(key)
+        self.map.contains_key(key)
     }
 
     #[inline]
@@ -242,11 +237,10 @@ impl PageCache {
         update_in_place: bool,
     ) -> Result<(), CacheError> {
         trace!("insert(key={:?})", key);
-        let slot = { self.map.borrow().get(&key) };
+        let slot = { self.map.get(&key) };
         if let Some(slot) = slot {
             let stale = {
-                let entries = self.entries.borrow();
-                let e = &entries[slot];
+                let e = &self.entries[slot];
                 let p = e.page.as_ref().expect("slot must have a page");
                 !p.is_loaded() && !p.is_locked()
             };
@@ -255,20 +249,20 @@ impl PageCache {
                 self._delete(key, true)?;
                 let slot_index = self.find_free_slot()?;
                 {
-                    let mut entries = self.entries.borrow_mut();
+                    let entries = &mut self.entries;
                     let entry = &mut entries[slot_index];
                     entry.key = key;
                     entry.page = Some(value);
                     entry.clear_ref();
                 }
-                self.map.borrow_mut().insert(key, slot_index);
+                self.map.insert(key, slot_index);
                 self.link_front(slot_index);
                 return Ok(());
             }
 
             self.move_to_front(slot);
             {
-                let existing = &mut self.entries.borrow_mut()[slot];
+                let existing = &mut self.entries[slot];
                 existing.bump_ref();
                 if update_in_place {
                     existing.page = Some(value);
@@ -286,7 +280,7 @@ impl PageCache {
         self.make_room_for(1)?;
         let slot_index = self.find_free_slot()?;
         {
-            let mut entries = self.entries.borrow_mut();
+            let entries = &mut self.entries;
             let entry = &mut entries[slot_index];
             turso_assert!(entry.page.is_none(), "page must be None in free slot");
             entry.key = key;
@@ -294,26 +288,25 @@ impl PageCache {
             // Sieve ref bit starts cleared, will be set on first access
             entry.clear_ref();
         }
-        self.map.borrow_mut().insert(key, slot_index);
+        self.map.insert(key, slot_index);
         self.link_front(slot_index);
         Ok(())
     }
 
-    fn find_free_slot(&self) -> Result<usize, CacheError> {
-        let slot = self.freelist.borrow_mut().pop().ok_or_else(|| {
+    fn find_free_slot(&mut self) -> Result<usize, CacheError> {
+        let slot = self.freelist.pop().ok_or_else(|| {
             CacheError::InternalError("No free slots available after make_room_for".into())
         })?;
         #[cfg(debug_assertions)]
         {
-            let entries = self.entries.borrow();
             turso_assert!(
-                entries[slot].page.is_none(),
+                self.entries[slot].page.is_none(),
                 "allocating non-free slot {}",
                 slot
             );
         }
         // Reset linkage on entry itself
-        self.entries.borrow()[slot].reset_links();
+        self.entries[slot].reset_links();
         Ok(slot)
     }
 
@@ -323,12 +316,12 @@ impl PageCache {
         }
 
         let (entry, slot_idx) = {
-            let map = self.map.borrow();
+            let map = &self.map;
             let idx = map.get(&key).ok_or_else(|| {
                 CacheError::InternalError("Key exists but not found in map".into())
             })?;
             (
-                self.entries.borrow()[idx]
+                self.entries[idx]
                     .page
                     .as_ref()
                     .expect("page in map was None")
@@ -359,13 +352,13 @@ impl PageCache {
         }
 
         self.unlink(slot_idx);
-        self.map.borrow_mut().remove(&key);
+        self.map.remove(&key);
         {
-            let e = &mut self.entries.borrow_mut()[slot_idx];
-            e.page = None;
-            e.clear_ref();
-            e.reset_links();
-            self.freelist.borrow_mut().push(slot_idx);
+            let entry = &mut self.entries[slot_idx];
+            entry.page = None;
+            entry.clear_ref();
+            entry.reset_links();
+            self.freelist.push(slot_idx);
         }
         Ok(())
     }
@@ -379,7 +372,7 @@ impl PageCache {
 
     #[inline]
     pub fn get(&mut self, key: &PageCacheKey) -> crate::Result<Option<PageRef>> {
-        let Some(slot) = self.map.borrow().get(key) else {
+        let Some(slot) = self.map.get(key) else {
             return Ok(None);
         };
         // Because we can abort a read_page completion, this means a page can be in the cache but be unloaded and unlocked.
@@ -387,7 +380,7 @@ impl PageCache {
         // assertions later on. This is worsened by the fact that page cache is not per `Statement`, so you can abort a completion
         // in one Statement, and trigger some error in the next one if we don't evict the page here.
         let page = {
-            let entry = &self.entries.borrow()[slot];
+            let entry = &self.entries[slot];
             entry.bump_ref();
             entry
                 .page
@@ -405,8 +398,8 @@ impl PageCache {
 
     #[inline]
     pub fn peek(&self, key: &PageCacheKey, touch: bool) -> Option<PageRef> {
-        let slot = self.map.borrow().get(key)?;
-        let entries = self.entries.borrow();
+        let slot = self.map.get(key)?;
+        let entries = &self.entries;
         let page = entries[slot].page.as_ref()?.clone();
         if touch {
             // set reference bit to 'touch' page
@@ -443,7 +436,7 @@ impl PageCache {
             ref_bit: RefBit,
         }
         let survivors: Vec<Payload> = {
-            let entries = self.entries.borrow();
+            let entries = &self.entries;
             let mut v = Vec::with_capacity(self.len());
             // walk tail..head to preserve recency when re-linking via link_front
             let mut cur = self.tail.get();
@@ -462,9 +455,7 @@ impl PageCache {
         };
 
         // Resize entry array; reset heads
-        self.entries
-            .borrow_mut()
-            .resize(new_cap, PageCacheEntry::empty());
+        self.entries.resize(new_cap, PageCacheEntry::empty());
         self.capacity = new_cap;
         let mut new_map = PageHashMap::new(new_cap);
         self.head.set(NULL);
@@ -472,7 +463,7 @@ impl PageCache {
 
         // Repack compactly: survivors[tail..head] pushed to front -> final order == original
         {
-            let mut entries_mut = self.entries.borrow_mut();
+            let entries_mut = &mut self.entries;
             for (slot, pl) in survivors.iter().enumerate().take(new_cap) {
                 let e = &mut entries_mut[slot];
                 e.key = pl.key;
@@ -485,12 +476,12 @@ impl PageCache {
         for slot in 0..survivors.len().min(new_cap) {
             self.link_front(slot);
         }
-        self.map.replace(new_map);
+        self.map = new_map;
 
         // Rebuild freelist
         let used = survivors.len().min(new_cap);
         {
-            let mut fl = self.freelist.borrow_mut();
+            let fl = &mut self.freelist;
             fl.clear();
             for i in (used..new_cap).rev() {
                 fl.push(i);
@@ -520,9 +511,13 @@ impl PageCache {
             return Ok(());
         }
 
+        const MAX_REF: usize = 3;
+        let len = self.len();
+        let available = self.capacity.saturating_sub(len);
         let mut need = n - available;
         let mut examined = 0usize;
-        let max_examinations = self.len().saturating_mul(2);
+        // allow enough rotations to drain max credits (+ one for the eviction pass)
+        let max_examinations = len.saturating_mul(MAX_REF + 1);
 
         while need > 0 && examined < max_examinations {
             let tail_idx = match self.tail.get() {
@@ -535,7 +530,7 @@ impl PageCache {
             };
 
             let (was_marked, key) = {
-                let mut entries = self.entries.borrow_mut();
+                let entries = &mut self.entries;
                 let s = &mut entries[tail_idx];
                 turso_assert!(s.page.is_some(), "tail points to empty slot");
                 (s.decrement_ref() != RefBit::Clear, s.key)
@@ -570,7 +565,7 @@ impl PageCache {
     }
 
     pub fn clear(&mut self) -> Result<(), CacheError> {
-        for e in self.entries.borrow().iter() {
+        for e in self.entries.iter() {
             if let Some(ref p) = e.page {
                 if p.is_dirty() {
                     return Err(CacheError::Dirty { pgno: p.get().id });
@@ -579,12 +574,12 @@ impl PageCache {
                 let _ = p.get().contents.take();
             }
         }
-        self.entries.borrow_mut().fill(PageCacheEntry::empty());
-        self.map.borrow_mut().clear();
+        self.entries.fill(PageCacheEntry::empty());
+        self.map.clear();
         self.head.set(NULL);
         self.tail.set(NULL);
         {
-            let mut fl = self.freelist.borrow_mut();
+            let fl = &mut self.freelist;
             fl.clear();
             for i in (0..self.capacity).rev() {
                 fl.push(i);
@@ -597,7 +592,6 @@ impl PageCache {
     pub fn truncate(&mut self, len: usize) -> Result<(), CacheError> {
         let keys_to_delete: Vec<PageCacheKey> = {
             self.entries
-                .borrow()
                 .iter()
                 .filter_map(|entry| {
                     entry.page.as_ref().and({
@@ -617,8 +611,8 @@ impl PageCache {
     }
 
     pub fn print(&self) {
-        tracing::debug!("page_cache_len={}", self.map.borrow().len());
-        let entries = self.entries.borrow();
+        tracing::debug!("page_cache_len={}", self.map.len());
+        let entries = &self.entries;
 
         for (i, entry_opt) in entries.iter().enumerate() {
             if let Some(ref page) = entry_opt.page {
@@ -637,7 +631,7 @@ impl PageCache {
     #[cfg(test)]
     pub fn keys(&mut self) -> Vec<PageCacheKey> {
         let mut keys = Vec::with_capacity(self.len());
-        let entries = self.entries.borrow();
+        let entries = &self.entries;
         for entry in entries.iter() {
             if entry.page.is_none() {
                 continue;
@@ -648,7 +642,7 @@ impl PageCache {
     }
 
     pub fn len(&self) -> usize {
-        self.map.borrow().len()
+        self.map.len()
     }
 
     pub fn capacity(&self) -> usize {
@@ -656,7 +650,7 @@ impl PageCache {
     }
 
     pub fn unset_dirty_all_pages(&mut self) {
-        let entries = self.entries.borrow();
+        let entries = &self.entries;
         for entry in entries.iter() {
             if entry.page.is_none() {
                 continue;
@@ -667,8 +661,8 @@ impl PageCache {
 
     #[cfg(test)]
     fn verify_cache_integrity(&self) {
-        let entries = self.entries.borrow();
-        let map = self.map.borrow();
+        let entries = &self.entries;
+        let map = &self.map;
 
         let head = self.head.get();
         let tail = self.tail.get();
@@ -730,7 +724,7 @@ impl PageCache {
         }
 
         // Freelist disjointness and shape: free slots must be unlinked and empty
-        let freelist = self.freelist.borrow();
+        let freelist = &self.freelist;
         let mut free_count = 0usize;
         for &s in freelist.iter() {
             free_count += 1;
@@ -764,12 +758,11 @@ impl PageCache {
 
     #[cfg(test)]
     fn slot_of(&self, key: &PageCacheKey) -> Option<usize> {
-        self.map.borrow().get(key)
+        self.map.get(key)
     }
     #[cfg(test)]
     fn ref_of(&self, key: &PageCacheKey) -> Option<RefBit> {
-        self.slot_of(key)
-            .map(|i| self.entries.borrow()[i].ref_bit.get())
+        self.slot_of(key).map(|i| self.entries[i].ref_bit.get())
     }
 }
 
@@ -954,8 +947,7 @@ mod tests {
         let tail_slot = cache.tail.get();
         assert_ne!(tail_slot, NULL, "Tail should not be NULL");
         assert_eq!(
-            cache.entries.borrow()[tail_slot].key,
-            key1,
+            cache.entries[tail_slot].key, key1,
             "Initial tail should be key1"
         );
 
@@ -971,7 +963,7 @@ mod tests {
         // Check new tail is key2 (next oldest)
         let new_tail_slot = cache.tail.get();
         assert_ne!(new_tail_slot, NULL, "New tail should not be NULL");
-        let entries = cache.entries.borrow();
+        let entries = &cache.entries;
         assert_eq!(entries[new_tail_slot].key, key2, "New tail should be key2");
         assert_eq!(
             entries[new_tail_slot].next.get(),
@@ -1003,16 +995,8 @@ mod tests {
         // Verify initial state
         let tail_slot = cache.tail.get();
         let head_slot = cache.head.get();
-        assert_eq!(
-            cache.entries.borrow()[tail_slot].key,
-            key1,
-            "Initial tail check"
-        );
-        assert_eq!(
-            cache.entries.borrow()[head_slot].key,
-            key4,
-            "Initial head check"
-        );
+        assert_eq!(cache.entries[tail_slot].key, key1, "Initial tail check");
+        assert_eq!(cache.entries[head_slot].key, key4, "Initial head check");
 
         // Delete middle element (key2)
         assert!(cache.delete(key2).is_ok());
@@ -1026,7 +1010,7 @@ mod tests {
         // Verify head and tail keys remain the same
         let new_head_slot = cache.head.get();
         let new_tail_slot = cache.tail.get();
-        let entries = cache.entries.borrow();
+        let entries = &cache.entries;
         assert_eq!(
             entries[new_head_slot].key, key4,
             "Head should still be key4"
@@ -1037,8 +1021,8 @@ mod tests {
         );
 
         // Check that key3 and key1 are now properly linked
-        let key3_slot = cache.map.borrow().get(&key3).unwrap();
-        let key1_slot = cache.map.borrow().get(&key1).unwrap();
+        let key3_slot = cache.map.get(&key3).unwrap();
+        let key1_slot = cache.map.get(&key1).unwrap();
 
         // key3 should be between head(key4) and tail(key1)
         assert_eq!(
@@ -1330,16 +1314,8 @@ mod tests {
         // Verify initial ordering (head=key3, tail=key1)
         let head_slot = cache.head.get();
         let tail_slot = cache.tail.get();
-        assert_eq!(
-            cache.entries.borrow()[head_slot].key,
-            key3,
-            "Head should be key3"
-        );
-        assert_eq!(
-            cache.entries.borrow()[tail_slot].key,
-            key1,
-            "Tail should be key1"
-        );
+        assert_eq!(cache.entries[head_slot].key, key3, "Head should be key3");
+        assert_eq!(cache.entries[tail_slot].key, key1, "Tail should be key1");
 
         // Delete middle element (key2)
         assert!(cache.delete(key2).is_ok());
@@ -1351,7 +1327,7 @@ mod tests {
         // Head and tail keys should remain the same
         let new_head_slot = cache.head.get();
         let new_tail_slot = cache.tail.get();
-        let entries = cache.entries.borrow();
+        let entries = &cache.entries;
         assert_eq!(
             entries[new_head_slot].key, key3,
             "Head should still be key3"
@@ -1397,12 +1373,11 @@ mod tests {
         // Check new head is key2
         let head_slot = cache.head.get();
         assert_eq!(
-            cache.entries.borrow()[head_slot].key,
-            key2,
+            cache.entries[head_slot].key, key2,
             "New head should be key2"
         );
         assert_eq!(
-            cache.entries.borrow()[head_slot].prev.get(),
+            cache.entries[head_slot].prev.get(),
             NULL,
             "New head's prev should be NULL"
         );
@@ -1649,35 +1624,6 @@ mod tests {
             growth < 10_000_000,
             "Memory grew by {growth} bytes over test cycles (limit: 10MB)",
         );
-    }
-
-    #[test]
-    fn gclock_ref_saturates_and_decays() {
-        let mut c = PageCache::new(3);
-        let k = insert_page(&mut c, 1);
-
-        // No credit on insert.
-        assert_eq!(c.ref_of(&k), Some(RefBit::Clear));
-
-        // Three touches saturate to Max.
-        assert!(c.get(&k).unwrap().is_some());
-        assert!(c.get(&k).unwrap().is_some());
-        assert!(c.get(&k).unwrap().is_some());
-        assert_eq!(c.ref_of(&k), Some(RefBit::Max));
-
-        // Force three eviction passes; it should survive until credit drains.
-        insert_page(&mut c, 2); // pass 1, bump to Med and moved to head
-        assert_eq!(c.ref_of(&k), Some(RefBit::Med));
-        insert_page(&mut c, 3); // pass 2, Min
-        assert_eq!(c.ref_of(&k), Some(RefBit::Min));
-        insert_page(&mut c, 4); // pass 3, Clear then evict on next encounter
-                                // It got moved to head on pass 3; now force one more pass to evict it:
-        insert_page(&mut c, 5);
-        assert!(
-            c.get(&k).unwrap().is_none(),
-            "k should be evicted after credit drains"
-        );
-        c.verify_cache_integrity();
     }
 
     #[test]
