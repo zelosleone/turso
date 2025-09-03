@@ -2421,7 +2421,7 @@ mod tests {
             })
         };
         let _ = thread.join();
-        let cache = cache.read();
+        let mut cache = cache.write();
         let page_key = PageCacheKey::new(1);
         let page = cache.get(&page_key).unwrap();
         assert_eq!(page.unwrap().get().id, 1);

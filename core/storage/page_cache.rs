@@ -21,6 +21,17 @@ type SlotIndex = usize;
 
 const NULL: SlotIndex = usize::MAX;
 
+#[derive(Clone, Ord, Eq, PartialOrd, PartialEq, Copy, Debug)]
+/// To distinguish between a page touched by a scan vs a 'hot' page,
+/// we use a Reference Bit with 4 states, incrementing this bit up to a maximum
+/// of 3 on each access, and decrementing on each eviction scan pass.
+enum RefBit {
+    Clear,
+    Min,
+    Med,
+    Max,
+}
+
 #[derive(Clone, Debug)]
 struct PageCacheEntry {
     /// Key identifying this page
@@ -28,7 +39,7 @@ struct PageCacheEntry {
     /// The cached page, None if this slot is free
     page: Option<PageRef>,
     /// Reference bit for SIEVE algorithm - set on access, cleared during eviction scan
-    ref_bit: Cell<bool>,
+    ref_bit: Cell<RefBit>,
     /// Index of next entry in SIEVE queue (newer/toward head)
     next: Cell<SlotIndex>,
     /// Index of previous entry in SIEVE queue (older/toward tail)
@@ -40,7 +51,7 @@ impl Default for PageCacheEntry {
         Self {
             key: PageCacheKey(0),
             page: None,
-            ref_bit: Cell::new(false),
+            ref_bit: Cell::new(RefBit::Clear),
             next: Cell::new(NULL),
             prev: Cell::new(NULL),
         }
@@ -48,6 +59,31 @@ impl Default for PageCacheEntry {
 }
 
 impl PageCacheEntry {
+    #[inline]
+    fn bump_ref(&self) {
+        self.ref_bit.set(match self.ref_bit.get() {
+            RefBit::Clear => RefBit::Min,
+            RefBit::Min => RefBit::Med,
+            _ => RefBit::Max,
+        });
+    }
+
+    #[inline]
+    /// Returns the old value
+    fn decrement_ref(&self) -> RefBit {
+        let old = self.ref_bit.get();
+        let new = match old {
+            RefBit::Max => RefBit::Med,
+            RefBit::Med => RefBit::Min,
+            _ => RefBit::Clear,
+        };
+        self.ref_bit.set(new);
+        old
+    }
+    #[inline]
+    fn clear_ref(&self) {
+        self.ref_bit.set(RefBit::Clear);
+    }
     #[inline]
     fn empty() -> Self {
         Self::default()
@@ -206,44 +242,57 @@ impl PageCache {
         update_in_place: bool,
     ) -> Result<(), CacheError> {
         trace!("insert(key={:?})", key);
-        // Check first if page already exists in cache
         let slot = { self.map.borrow().get(&key) };
         if let Some(slot) = slot {
+            let stale = {
+                let entries = self.entries.borrow();
+                let e = &entries[slot];
+                let p = e.page.as_ref().expect("slot must have a page");
+                !p.is_loaded() && !p.is_locked()
+            };
+            if stale {
+                // evict, then continue with fresh insert
+                self._delete(key, true)?;
+                let slot_index = self.find_free_slot()?;
+                {
+                    let mut entries = self.entries.borrow_mut();
+                    let entry = &mut entries[slot_index];
+                    entry.key = key;
+                    entry.page = Some(value);
+                    entry.clear_ref();
+                }
+                self.map.borrow_mut().insert(key, slot_index);
+                self.link_front(slot_index);
+                return Ok(());
+            }
+
+            self.move_to_front(slot);
             {
                 let existing = &mut self.entries.borrow_mut()[slot];
-                existing.ref_bit.set(true);
+                existing.bump_ref();
                 if update_in_place {
-                    // update it in place
                     existing.page = Some(value);
+                    return Ok(());
                 } else {
-                    // the page we are inserting must match the existing page
                     turso_assert!(
-                        Arc::ptr_eq(
-                            existing.page.as_ref().expect("map points to empty slot"),
-                            &value
-                        ),
+                        Arc::ptr_eq(existing.page.as_ref().unwrap(), &value),
                         "Attempted to insert different page with same key: {key:?}"
                     );
+                    return Err(CacheError::KeyExists);
                 }
             }
-            self.move_to_front(slot);
-            return if update_in_place {
-                Ok(())
-            } else {
-                Err(CacheError::KeyExists)
-            };
         }
         // Key doesn't exist, proceed with new entry
         self.make_room_for(1)?;
         let slot_index = self.find_free_slot()?;
         {
             let mut entries = self.entries.borrow_mut();
-            let s = &mut entries[slot_index];
-            turso_assert!(s.page.is_none(), "page must be None in free slot");
-            s.key = key;
-            s.page = Some(value);
+            let entry = &mut entries[slot_index];
+            turso_assert!(entry.page.is_none(), "page must be None in free slot");
+            entry.key = key;
+            entry.page = Some(value);
             // Sieve ref bit starts cleared, will be set on first access
-            s.ref_bit.set(false);
+            entry.clear_ref();
         }
         self.map.borrow_mut().insert(key, slot_index);
         self.link_front(slot_index);
@@ -314,7 +363,7 @@ impl PageCache {
         {
             let e = &mut self.entries.borrow_mut()[slot_idx];
             e.page = None;
-            e.ref_bit.set(false);
+            e.clear_ref();
             e.reset_links();
             self.freelist.borrow_mut().push(slot_idx);
         }
@@ -337,11 +386,15 @@ impl PageCache {
         // However, if we do not evict that page from the page cache, we will return an unloaded page later which will trigger
         // assertions later on. This is worsened by the fact that page cache is not per `Statement`, so you can abort a completion
         // in one Statement, and trigger some error in the next one if we don't evict the page here.
-        let page = self.entries.borrow()[slot]
-            .page
-            .as_ref()
-            .expect("page in the map to exist")
-            .clone();
+        let page = {
+            let entry = &self.entries.borrow()[slot];
+            entry.bump_ref();
+            entry
+                .page
+                .as_ref()
+                .expect("page in the map to exist")
+                .clone()
+        };
         if !page.is_loaded() && !page.is_locked() {
             self.delete(*key)?;
             Ok(None)
@@ -357,7 +410,7 @@ impl PageCache {
         let page = entries[slot].page.as_ref()?.clone();
         if touch {
             // set reference bit to 'touch' page
-            entries[slot].ref_bit.set(true);
+            entries[slot].bump_ref();
         }
         Some(page)
     }
@@ -370,12 +423,24 @@ impl PageCache {
         if new_cap == self.capacity {
             return CacheResizeResult::Done;
         }
+        if new_cap < self.len() {
+            let need = self.len() - new_cap;
+            // repeat SIEVE passes until we evict `need` pages or give up
+            let mut evicted = 0;
+            while evicted < need {
+                match self.make_room_for(1) {
+                    Ok(()) => evicted += 1,
+                    Err(CacheError::Full) => return CacheResizeResult::PendingEvictions,
+                    Err(_) => return CacheResizeResult::PendingEvictions,
+                }
+            }
+        }
         assert!(new_cap > 0);
         // Collect survivors as payload, no linkage
         struct Payload {
             key: PageCacheKey,
             page: PageRef,
-            ref_bit: bool,
+            ref_bit: RefBit,
         }
         let survivors: Vec<Payload> = {
             let entries = self.entries.borrow();
@@ -439,8 +504,8 @@ impl PageCache {
     ///
     /// Uses the SIEVE algorithm to evict pages if necessary:
     /// 1. Start at tail (LRU position)
-    /// 2. If page is marked, unmark and move to head (second chance)
-    /// 3. If page is unmarked, evict it
+    /// 2. If page is marked, decrement mark and move to head
+    /// 3. If page mark was already Cleared, evict it
     /// 4. If page is unevictable (dirty/locked/pinned), move to head
     ///
     /// Returns `CacheError::Full` if not enough pages can be evicted
@@ -473,7 +538,7 @@ impl PageCache {
                 let mut entries = self.entries.borrow_mut();
                 let s = &mut entries[tail_idx];
                 turso_assert!(s.page.is_some(), "tail points to empty slot");
-                (s.ref_bit.replace(false), s.key)
+                (s.decrement_ref() != RefBit::Clear, s.key)
             };
 
             examined += 1;
@@ -558,7 +623,7 @@ impl PageCache {
         for (i, entry_opt) in entries.iter().enumerate() {
             if let Some(ref page) = entry_opt.page {
                 tracing::debug!(
-                    "slot={}, page={:?}, flags={}, pin_count={}, ref_bit={}",
+                    "slot={}, page={:?}, flags={}, pin_count={}, ref_bit={:?}",
                     i,
                     entry_opt.key,
                     page.get().flags.load(Ordering::Relaxed),
@@ -696,6 +761,16 @@ impl PageCache {
             self.capacity
         );
     }
+
+    #[cfg(test)]
+    fn slot_of(&self, key: &PageCacheKey) -> Option<usize> {
+        self.map.borrow().get(key)
+    }
+    #[cfg(test)]
+    fn ref_of(&self, key: &PageCacheKey) -> Option<RefBit> {
+        self.slot_of(key)
+            .map(|i| self.entries.borrow()[i].ref_bit.get())
+    }
 }
 
 impl Default for PageCache {
@@ -811,28 +886,20 @@ mod tests {
     use crate::storage::page_cache::CacheError;
     use crate::storage::pager::{Page, PageRef};
     use crate::storage::sqlite3_ondisk::PageContent;
-    use crate::{BufferPool, IO};
     use rand_chacha::{
         rand_core::{RngCore, SeedableRng},
         ChaCha8Rng,
     };
     use std::sync::Arc;
-    use std::sync::OnceLock;
 
     fn create_key(id: usize) -> PageCacheKey {
         PageCacheKey::new(id)
     }
 
-    static TEST_BUFFER_POOL: OnceLock<Arc<BufferPool>> = OnceLock::new();
-
-    #[allow(clippy::arc_with_non_send_sync)]
     pub fn page_with_content(page_id: usize) -> PageRef {
         let page = Arc::new(Page::new(page_id));
         {
-            let mock_io = Arc::new(crate::PlatformIO::new().unwrap()) as Arc<dyn IO>;
-            let pool = TEST_BUFFER_POOL
-                .get_or_init(|| BufferPool::begin_init(&mock_io, BufferPool::TEST_ARENA_SIZE));
-            let buffer = pool.allocate(4096);
+            let buffer = crate::Buffer::new_temporary(4096);
             let page_content = PageContent {
                 offset: 0,
                 buffer: Arc::new(buffer),
@@ -849,15 +916,6 @@ mod tests {
         let page = page_with_content(id);
         assert!(cache.insert(key, page).is_ok());
         key
-    }
-
-    fn insert_and_get_entry(cache: &mut PageCache, id: usize) -> (PageCacheKey, PageCacheEntry) {
-        let key = create_key(id);
-        let page = page_with_content(id);
-        assert!(cache.insert(key, page).is_ok());
-        let entry = cache.map.borrow().get(&key).expect("Key should exist");
-        let entry = cache.entries.borrow()[entry].clone();
-        (key, entry)
     }
 
     #[test]
@@ -878,37 +936,41 @@ mod tests {
             !cache.contains_key(&key1),
             "Cache should not contain key after delete"
         );
+        assert_eq!(cache.head.get(), NULL, "Head should be NULL when empty");
+        assert_eq!(cache.tail.get(), NULL, "Tail should be NULL when empty");
         cache.verify_cache_integrity();
     }
 
     #[test]
     fn test_detach_tail() {
         let mut cache = PageCache::default();
-        let key1 = insert_page(&mut cache, 1); // Will be tail
-        let key2 = insert_page(&mut cache, 2); // Will be middle
-        let _key3 = insert_page(&mut cache, 3); // Will be head
+        let key1 = insert_page(&mut cache, 1); // tail
+        let key2 = insert_page(&mut cache, 2); // middle
+        let key3 = insert_page(&mut cache, 3); // head
         cache.verify_cache_integrity();
         assert_eq!(cache.len(), 3);
 
-        // Verify initial tail
+        // Verify initial tail (key1 should be at tail)
         let tail_slot = cache.tail.get();
+        assert_ne!(tail_slot, NULL, "Tail should not be NULL");
         assert_eq!(
             cache.entries.borrow()[tail_slot].key,
             key1,
-            "Initial tail check"
+            "Initial tail should be key1"
         );
 
         // Delete tail
         assert!(cache.delete(key1).is_ok());
         assert_eq!(cache.len(), 2, "Length should be 2 after deleting tail");
         assert!(
-            cache.map.borrow().get(&key1).is_none(),
-            "Map should not contain deleted tail key"
+            !cache.contains_key(&key1),
+            "Cache should not contain deleted tail key"
         );
         cache.verify_cache_integrity();
 
-        // Check new tail is key2
+        // Check new tail is key2 (next oldest)
         let new_tail_slot = cache.tail.get();
+        assert_ne!(new_tail_slot, NULL, "New tail should not be NULL");
         let entries = cache.entries.borrow();
         assert_eq!(entries[new_tail_slot].key, key2, "New tail should be key2");
         assert_eq!(
@@ -917,16 +979,14 @@ mod tests {
             "New tail's next should be NULL"
         );
 
+        // Verify head is key3
         let head_slot = cache.head.get();
+        assert_ne!(head_slot, NULL, "Head should not be NULL");
+        assert_eq!(entries[head_slot].key, key3, "Head should be key3");
         assert_eq!(
             entries[head_slot].prev.get(),
             NULL,
             "Head's prev should be NULL"
-        );
-        assert_eq!(
-            entries[head_slot].next.get(),
-            new_tail_slot,
-            "Head's next should point to new tail"
         );
     }
 
@@ -939,55 +999,57 @@ mod tests {
         let key4 = insert_page(&mut cache, 4); // Will be head
         cache.verify_cache_integrity();
         assert_eq!(cache.len(), 4);
+
+        // Verify initial state
+        let tail_slot = cache.tail.get();
+        let head_slot = cache.head.get();
         assert_eq!(
-            cache.entries.borrow()[cache.tail.get()].key,
+            cache.entries.borrow()[tail_slot].key,
             key1,
             "Initial tail check"
         );
         assert_eq!(
-            cache.entries.borrow()[cache.head.get()].key,
+            cache.entries.borrow()[head_slot].key,
             key4,
             "Initial head check"
         );
-
-        let head_slot_before = cache.head.get();
-        let tail_slot_before = cache.tail.get();
 
         // Delete middle element (key2)
         assert!(cache.delete(key2).is_ok());
         assert_eq!(cache.len(), 3, "Length should be 3 after deleting middle");
         assert!(
-            cache.map.borrow().get(&key2).is_none(),
-            "Map should not contain deleted middle key2"
+            !cache.contains_key(&key2),
+            "Cache should not contain deleted middle key2"
         );
         cache.verify_cache_integrity();
 
-        // Head and tail should remain the same
+        // Verify head and tail keys remain the same
+        let new_head_slot = cache.head.get();
+        let new_tail_slot = cache.tail.get();
+        let entries = cache.entries.borrow();
         assert_eq!(
-            cache.head.get(),
-            head_slot_before,
-            "Head should remain key4"
+            entries[new_head_slot].key, key4,
+            "Head should still be key4"
         );
         assert_eq!(
-            cache.tail.get(),
-            tail_slot_before,
-            "Tail should remain key1"
+            entries[new_tail_slot].key, key1,
+            "Tail should still be key1"
         );
 
-        // Check that key3 and key1 are now linked
-        let entries = cache.entries.borrow();
+        // Check that key3 and key1 are now properly linked
         let key3_slot = cache.map.borrow().get(&key3).unwrap();
         let key1_slot = cache.map.borrow().get(&key1).unwrap();
 
+        // key3 should be between head(key4) and tail(key1)
+        assert_eq!(
+            entries[key3_slot].prev.get(),
+            new_head_slot,
+            "Key3's prev should point to head (key4)"
+        );
         assert_eq!(
             entries[key3_slot].next.get(),
             key1_slot,
-            "Key3's next should point to key1"
-        );
-        assert_eq!(
-            entries[key1_slot].prev.get(),
-            key3_slot,
-            "Key1's prev should point to key3"
+            "Key3's next should point to tail (key1)"
         );
     }
 
@@ -996,14 +1058,16 @@ mod tests {
         let mut cache = PageCache::default();
         let key1 = create_key(1);
         let page1_v1 = page_with_content(1);
-        let page1_v2 = page1_v1.clone();
+        let page1_v2 = page1_v1.clone(); // Same Arc instance
 
         assert!(cache.insert(key1, page1_v1.clone()).is_ok());
         assert_eq!(cache.len(), 1);
-        // This should return KeyExists error but not panic
+
+        // Inserting same page instance should return KeyExists error
         let result = cache.insert(key1, page1_v2.clone());
         assert_eq!(result, Err(CacheError::KeyExists));
         assert_eq!(cache.len(), 1);
+
         // Verify the page is still accessible
         assert!(cache.get(&key1).unwrap().is_some());
         cache.verify_cache_integrity();
@@ -1015,11 +1079,14 @@ mod tests {
         let mut cache = PageCache::default();
         let key1 = create_key(1);
         let page1_v1 = page_with_content(1);
-        let page1_v2 = page_with_content(1); // Different instance
+        let page1_v2 = page_with_content(1); // Different Arc instance
+
         assert!(cache.insert(key1, page1_v1.clone()).is_ok());
         assert_eq!(cache.len(), 1);
         cache.verify_cache_integrity();
-        let _ = cache.insert(key1, page1_v2.clone()); // Panic
+
+        // This should panic because it's a different page instance
+        let _ = cache.insert(key1, page1_v2.clone());
     }
 
     #[test]
@@ -1027,7 +1094,10 @@ mod tests {
         let mut cache = PageCache::default();
         let key_nonexist = create_key(99);
 
-        assert!(cache.delete(key_nonexist).is_ok()); // no-op
+        // Deleting non-existent key should be a no-op (returns Ok)
+        assert!(cache.delete(key_nonexist).is_ok());
+        assert_eq!(cache.len(), 0);
+        cache.verify_cache_integrity();
     }
 
     #[test]
@@ -1035,68 +1105,84 @@ mod tests {
         let mut cache = PageCache::new(1);
         let key1 = insert_page(&mut cache, 1);
         let key2 = insert_page(&mut cache, 2);
-        assert_eq!(cache.get(&key2).unwrap().unwrap().get().id, 2);
-        assert!(cache.get(&key1).unwrap().is_none());
+
+        // With capacity=1, inserting key2 should evict key1
         assert_eq!(cache.get(&key2).unwrap().unwrap().get().id, 2);
         assert!(
             cache.get(&key1).unwrap().is_none(),
-            "capacity=1 should evict the older page"
+            "key1 should be evicted"
         );
+
+        // key2 should still be accessible
+        assert_eq!(cache.get(&key2).unwrap().unwrap().get().id, 2);
+        assert!(
+            cache.get(&key1).unwrap().is_none(),
+            "capacity=1 should have evicted the older page"
+        );
+        cache.verify_cache_integrity();
     }
 
     #[test]
     fn test_sieve_touch_non_tail_does_not_affect_immediate_eviction() {
-        // Insert 1,2,3 -> [3,2,1], tail=1
+        // SIEVE algorithm: touching a non-tail page marks it but doesn't move it.
+        // The tail (if unmarked) will still be the first eviction candidate.
+
+        // Insert 1,2,3 -> order [3,2,1] with tail=1
         let mut cache = PageCache::new(3);
         let key1 = insert_page(&mut cache, 1);
         let key2 = insert_page(&mut cache, 2);
         let key3 = insert_page(&mut cache, 3);
 
-        // Touch key2 (not tail) to mark it.
+        // Touch key2 (middle) to mark it with reference bit
         assert!(cache.get(&key2).unwrap().is_some());
 
-        // Insert 4: tail is still 1 (unmarked) -> evict 1 (not 2).
+        // Insert 4: SIEVE examines tail (key1, unmarked) -> evict key1
         let key4 = insert_page(&mut cache, 4);
 
         assert!(
             cache.get(&key2).unwrap().is_some(),
-            "marked non-tail should remain"
+            "marked non-tail (key2) should remain"
         );
-        assert!(cache.get(&key3).unwrap().is_some());
-        assert!(cache.get(&key4).unwrap().is_some());
+        assert!(cache.get(&key3).unwrap().is_some(), "key3 should remain");
+        assert!(
+            cache.get(&key4).unwrap().is_some(),
+            "key4 was just inserted"
+        );
         assert!(
             cache.get(&key1).unwrap().is_none(),
-            "unmarked tail should be evicted"
+            "unmarked tail (key1) should be evicted first"
         );
         cache.verify_cache_integrity();
     }
 
     #[test]
     fn test_sieve_second_chance_preserves_marked_tail() {
-        // Capacity 3, insert 1,2,3 → order(head..tail) = [3,2,1]
+        // SIEVE gives a "second chance" to marked pages at the tail
+        // by clearing their bit and moving them to head
+
         let mut cache = PageCache::new(3);
         let key1 = insert_page(&mut cache, 1);
         let key2 = insert_page(&mut cache, 2);
         let key3 = insert_page(&mut cache, 3);
         assert_eq!(cache.len(), 3);
 
-        // Mark the TAIL (key1). SIEVE should not move it yet
+        // Mark the tail (key1) by accessing it
         assert!(cache.get(&key1).unwrap().is_some());
 
-        // Insert 4: must evict exactly one unmarked page.
-        // Tail is 1 (marked): give second chance: move 1 to head & clear its bit.
-        // New tail becomes 2 (unmarked): evict 2. Final set: (1,3,4).
+        // Insert 4: SIEVE process:
+        // 1. Examines tail (key1, marked) -> clear bit, move to head
+        // 2. New tail is key2 (unmarked) -> evict key2
         let key4 = insert_page(&mut cache, 4);
 
         assert!(
             cache.get(&key1).unwrap().is_some(),
-            "key1 is marked tail and should survive"
+            "key1 had ref bit set, got second chance"
         );
         assert!(cache.get(&key3).unwrap().is_some(), "key3 should remain");
         assert!(cache.get(&key4).unwrap().is_some(), "key4 just inserted");
         assert!(
             cache.get(&key2).unwrap().is_none(),
-            "key2 should be the one evicted by SIEVE"
+            "key2 became new tail after key1's second chance and was evicted"
         );
         assert_eq!(cache.len(), 3);
         cache.verify_cache_integrity();
@@ -1110,6 +1196,7 @@ mod tests {
         page.set_locked();
 
         assert_eq!(cache.delete(key), Err(CacheError::Locked { pgno: 1 }));
+        assert_eq!(cache.len(), 1, "Locked page should not be deleted");
         cache.verify_cache_integrity();
     }
 
@@ -1117,10 +1204,11 @@ mod tests {
     fn test_delete_dirty_page() {
         let mut cache = PageCache::default();
         let key = insert_page(&mut cache, 1);
-        let page = cache.get(&key).expect("Page should exist").unwrap();
+        let page = cache.get(&key).unwrap().unwrap();
         page.set_dirty();
 
         assert_eq!(cache.delete(key), Err(CacheError::Dirty { pgno: 1 }));
+        assert_eq!(cache.len(), 1, "Dirty page should not be deleted");
         cache.verify_cache_integrity();
     }
 
@@ -1128,10 +1216,11 @@ mod tests {
     fn test_delete_pinned_page() {
         let mut cache = PageCache::default();
         let key = insert_page(&mut cache, 1);
-        let page = cache.get(&key).expect("Page should exist").unwrap();
+        let page = cache.get(&key).unwrap().unwrap();
         page.pin();
 
         assert_eq!(cache.delete(key), Err(CacheError::Pinned { pgno: 1 }));
+        assert_eq!(cache.len(), 1, "Pinned page should not be deleted");
         cache.verify_cache_integrity();
     }
 
@@ -1141,7 +1230,7 @@ mod tests {
         let key1 = insert_page(&mut cache, 1);
         let key2 = insert_page(&mut cache, 2);
 
-        // Make both pages dirty
+        // Make both pages dirty (unevictable)
         cache.get(&key1).unwrap().unwrap().set_dirty();
         cache.get(&key2).unwrap().unwrap().set_dirty();
 
@@ -1152,6 +1241,7 @@ mod tests {
 
         assert_eq!(result, Err(CacheError::Full));
         assert_eq!(cache.len(), 2);
+        cache.verify_cache_integrity();
     }
 
     #[test]
@@ -1159,18 +1249,20 @@ mod tests {
         let mut cache = PageCache::default();
         let key1 = insert_page(&mut cache, 1);
         let key2 = insert_page(&mut cache, 2);
+
         assert_eq!(cache.get(&key1).unwrap().unwrap().get().id, 1);
         assert_eq!(cache.get(&key2).unwrap().unwrap().get().id, 2);
+        cache.verify_cache_integrity();
     }
 
     #[test]
     fn test_page_cache_over_capacity() {
-        // Capacity 2, insert 1,2 -> [2,1] with tail=1 (unmarked)
+        // Test SIEVE eviction when exceeding capacity
         let mut cache = PageCache::new(2);
         let key1 = insert_page(&mut cache, 1);
         let key2 = insert_page(&mut cache, 2);
 
-        // Insert 3 -> tail(1) is unmarked → evict 1; keep 2.
+        // Insert 3: tail (key1, unmarked) should be evicted
         let key3 = insert_page(&mut cache, 3);
 
         assert_eq!(cache.len(), 2);
@@ -1178,7 +1270,7 @@ mod tests {
         assert!(cache.get(&key3).unwrap().is_some(), "key3 just inserted");
         assert!(
             cache.get(&key1).unwrap().is_none(),
-            "key1 (tail, unmarked) must be evicted"
+            "key1 (oldest, unmarked) should be evicted"
         );
         cache.verify_cache_integrity();
     }
@@ -1187,8 +1279,11 @@ mod tests {
     fn test_page_cache_delete() {
         let mut cache = PageCache::default();
         let key1 = insert_page(&mut cache, 1);
+
         assert!(cache.delete(key1).is_ok());
         assert!(cache.get(&key1).unwrap().is_none());
+        assert_eq!(cache.len(), 0);
+        cache.verify_cache_integrity();
     }
 
     #[test]
@@ -1196,10 +1291,14 @@ mod tests {
         let mut cache = PageCache::default();
         let key1 = insert_page(&mut cache, 1);
         let key2 = insert_page(&mut cache, 2);
+
         assert!(cache.clear().is_ok());
         assert!(cache.get(&key1).unwrap().is_none());
         assert!(cache.get(&key2).unwrap().is_none());
         assert_eq!(cache.len(), 0);
+        assert_eq!(cache.head.get(), NULL);
+        assert_eq!(cache.tail.get(), NULL);
+        cache.verify_cache_integrity();
     }
 
     #[test]
@@ -1209,11 +1308,16 @@ mod tests {
             let _ = insert_page(&mut cache, i);
         }
         assert_eq!(cache.len(), 5);
+
         let result = cache.resize(3);
         assert_eq!(result, CacheResizeResult::Done);
         assert_eq!(cache.len(), 3);
         assert_eq!(cache.capacity(), 3);
+
+        // Should still be able to insert after resize
         assert!(cache.insert(create_key(6), page_with_content(6)).is_ok());
+        assert_eq!(cache.len(), 3); // One was evicted to make room
+        cache.verify_cache_integrity();
     }
 
     #[test]
@@ -1223,32 +1327,49 @@ mod tests {
         let key2 = insert_page(&mut cache, 2);
         let key3 = insert_page(&mut cache, 3);
 
-        assert_eq!(cache.head.get(), 2, "Head should be slot for key3");
-        assert_eq!(cache.tail.get(), 0, "Tail should be slot for key1");
+        // Verify initial ordering (head=key3, tail=key1)
+        let head_slot = cache.head.get();
+        let tail_slot = cache.tail.get();
+        assert_eq!(
+            cache.entries.borrow()[head_slot].key,
+            key3,
+            "Head should be key3"
+        );
+        assert_eq!(
+            cache.entries.borrow()[tail_slot].key,
+            key1,
+            "Tail should be key1"
+        );
 
-        // Delete middle element
+        // Delete middle element (key2)
         assert!(cache.delete(key2).is_ok());
 
         // Verify structure after deletion
         assert_eq!(cache.len(), 2);
-        assert!(cache.map.borrow().get(&key2).is_none());
+        assert!(!cache.contains_key(&key2));
 
-        // Head should still be key3's slot, tail should still be key1's slot
-        let head_slot = cache.head.get();
-        let tail_slot = cache.tail.get();
+        // Head and tail keys should remain the same
+        let new_head_slot = cache.head.get();
+        let new_tail_slot = cache.tail.get();
         let entries = cache.entries.borrow();
-        assert_eq!(entries[head_slot].key, key3, "Head should still be key3");
-        assert_eq!(entries[tail_slot].key, key1, "Tail should still be key1");
-
-        // Check linkage
         assert_eq!(
-            entries[head_slot].next.get(),
-            tail_slot,
+            entries[new_head_slot].key, key3,
+            "Head should still be key3"
+        );
+        assert_eq!(
+            entries[new_tail_slot].key, key1,
+            "Tail should still be key1"
+        );
+
+        // Check direct linkage between head and tail
+        assert_eq!(
+            entries[new_head_slot].next.get(),
+            new_tail_slot,
             "Head's next should point directly to tail after middle deleted"
         );
         assert_eq!(
-            entries[tail_slot].prev.get(),
-            head_slot,
+            entries[new_tail_slot].prev.get(),
+            new_head_slot,
             "Tail's prev should point directly to head after middle deleted"
         );
 
@@ -1268,28 +1389,30 @@ mod tests {
         assert!(cache.delete(key3).is_ok());
         assert_eq!(cache.len(), 2, "Length should be 2 after deleting head");
         assert!(
-            cache.map.borrow().get(&key3).is_none(),
-            "Map should not contain deleted head key"
+            !cache.contains_key(&key3),
+            "Cache should not contain deleted head key"
         );
         cache.verify_cache_integrity();
 
         // Check new head is key2
         let head_slot = cache.head.get();
-        {
-            let entries = cache.entries.borrow_mut();
-            assert_eq!(entries[head_slot].key, key2, "New head should be key2");
-            assert_eq!(
-                entries[head_slot].prev.get(),
-                NULL,
-                "New head's prev should be NULL"
-            );
-        }
-        // Delete another
+        assert_eq!(
+            cache.entries.borrow()[head_slot].key,
+            key2,
+            "New head should be key2"
+        );
+        assert_eq!(
+            cache.entries.borrow()[head_slot].prev.get(),
+            NULL,
+            "New head's prev should be NULL"
+        );
+
+        // Delete tail (key1)
         assert!(cache.delete(key1).is_ok());
         assert_eq!(cache.len(), 1, "Length should be 1 after deleting two");
         cache.verify_cache_integrity();
 
-        // Delete last
+        // Delete last element (key2)
         assert!(cache.delete(key2).is_ok());
         assert_eq!(cache.len(), 0, "Length should be 0 after deleting all");
         assert_eq!(cache.head.get(), NULL, "Head should be NULL when empty");
@@ -1297,6 +1420,7 @@ mod tests {
         cache.verify_cache_integrity();
     }
 
+    #[test]
     fn test_resize_larger() {
         let mut cache = PageCache::new(2);
         let key1 = insert_page(&mut cache, 1);
@@ -1308,10 +1432,11 @@ mod tests {
         assert_eq!(cache.len(), 2);
         assert_eq!(cache.capacity(), 5);
 
+        // Existing pages should still be accessible
         assert!(cache.get(&key1).is_ok_and(|p| p.is_some()));
         assert!(cache.get(&key2).is_ok_and(|p| p.is_some()));
 
-        // Now we should be able to add 3 more
+        // Now we should be able to add 3 more without eviction
         for i in 3..=5 {
             let _ = insert_page(&mut cache, i);
         }
@@ -1325,6 +1450,7 @@ mod tests {
         for i in 1..=3 {
             let _ = insert_page(&mut cache, i);
         }
+
         let result = cache.resize(3);
         assert_eq!(result, CacheResizeResult::Done);
         assert_eq!(cache.len(), 3);
@@ -1340,6 +1466,7 @@ mod tests {
         let _ = insert_page(&mut cache, 8);
         let _ = insert_page(&mut cache, 10);
 
+        // Truncate to keep only pages <= 4
         cache.truncate(4).unwrap();
 
         assert!(cache.contains_key(&PageCacheKey(1)));
@@ -1357,6 +1484,7 @@ mod tests {
         let _ = insert_page(&mut cache, 8);
         let _ = insert_page(&mut cache, 10);
 
+        // Truncate to 4 (removes all pages since they're > 4)
         cache.truncate(4).unwrap();
 
         assert!(!cache.contains_key(&PageCacheKey(8)));
@@ -1373,7 +1501,8 @@ mod tests {
             .unwrap()
             .as_secs();
         let mut rng = ChaCha8Rng::seed_from_u64(seed);
-        tracing::info!("super seed: {}", seed);
+        tracing::info!("fuzz test seed: {}", seed);
+
         let max_pages = 10;
         let mut cache = PageCache::new(10);
         let mut reference_map = std::collections::HashMap::new();
@@ -1383,21 +1512,21 @@ mod tests {
 
             match rng.next_u64() % 2 {
                 0 => {
-                    // add
+                    // Insert operation
                     let id_page = rng.next_u64() % max_pages;
                     let key = PageCacheKey::new(id_page as usize);
                     #[allow(clippy::arc_with_non_send_sync)]
                     let page = Arc::new(Page::new(id_page as usize));
 
                     if cache.peek(&key, false).is_some() {
-                        continue; // skip duplicate page ids
+                        continue; // Skip duplicate page ids
                     }
 
                     tracing::debug!("inserting page {:?}", key);
                     match cache.insert(key, page.clone()) {
-                        Err(CacheError::Full | CacheError::ActiveRefs) => {} // Ignore
+                        Err(CacheError::Full | CacheError::ActiveRefs) => {} // Expected, ignore
                         Err(err) => {
-                            panic!("Cache insertion failed: {err:?}");
+                            panic!("Cache insertion failed unexpectedly: {err:?}");
                         }
                         Ok(_) => {
                             reference_map.insert(key, page);
@@ -1407,10 +1536,10 @@ mod tests {
                             }
                         }
                     }
-                    assert!(cache.len() <= 10);
+                    assert!(cache.len() <= 10, "Cache size exceeded capacity");
                 }
                 1 => {
-                    // remove
+                    // Delete operation
                     let random = rng.next_u64() % 2 == 0;
                     let key = if random || reference_map.is_empty() {
                         let id_page: u64 = rng.next_u64() % max_pages;
@@ -1440,34 +1569,62 @@ mod tests {
 
     #[test]
     fn test_peek_without_touch() {
-        // Capacity 2: insert 1,2 -> [2,1] tail=1
+        // Test that peek with touch=false doesn't mark pages
         let mut cache = PageCache::new(2);
         let key1 = insert_page(&mut cache, 1);
         let key2 = insert_page(&mut cache, 2);
-        assert_eq!(cache.get(&key1).unwrap().unwrap().get().id, 1);
-        assert_eq!(cache.get(&key2).unwrap().unwrap().get().id, 2);
 
-        // Peek without touching DOES NOT mark key1
+        // Peek key1 without touching (no ref bit set)
         assert!(cache.peek(&key1, false).is_some());
 
-        // Insert 3 -> tail(1) still unmarked → evict 1.
+        // Insert 3: should evict unmarked tail (key1)
         let key3 = insert_page(&mut cache, 3);
-        assert!(cache.get(&key1).unwrap().is_none());
-        assert_eq!(cache.get(&key2).unwrap().unwrap().get().id, 2);
-        assert_eq!(cache.get(&key3).unwrap().unwrap().get().id, 3);
 
-        assert!(cache.get(&key3).is_ok_and(|p| p.is_some()));
-        assert!(cache.get(&key2).is_ok_and(|p| p.is_some()));
+        assert!(cache.get(&key2).unwrap().is_some(), "key2 should remain");
         assert!(
-            cache.get(&key1).is_ok_and(|p| p.is_none()),
-            "key1 should be evicted since peek(false) didn't mark"
+            cache.get(&key3).unwrap().is_some(),
+            "key3 was just inserted"
+        );
+        assert!(
+            cache.get(&key1).unwrap().is_none(),
+            "key1 should be evicted since peek(false) didn't mark it"
         );
         assert_eq!(cache.len(), 2);
         cache.verify_cache_integrity();
     }
 
     #[test]
-    #[ignore = "long running test, remove to verify"]
+    fn test_peek_with_touch() {
+        // Test that peek with touch=true marks pages for SIEVE
+        let mut cache = PageCache::new(2);
+        let key1 = insert_page(&mut cache, 1);
+        let key2 = insert_page(&mut cache, 2);
+
+        // Peek key1 WITH touching (sets ref bit)
+        assert!(cache.peek(&key1, true).is_some());
+
+        // Insert 3: key1 is marked, so it gets second chance
+        // key2 becomes new tail and gets evicted
+        let key3 = insert_page(&mut cache, 3);
+
+        assert!(
+            cache.get(&key1).unwrap().is_some(),
+            "key1 should survive (was marked)"
+        );
+        assert!(
+            cache.get(&key3).unwrap().is_some(),
+            "key3 was just inserted"
+        );
+        assert!(
+            cache.get(&key2).unwrap().is_none(),
+            "key2 should be evicted after key1's second chance"
+        );
+        assert_eq!(cache.len(), 2);
+        cache.verify_cache_integrity();
+    }
+
+    #[test]
+    #[ignore = "long running test, remove ignore to verify memory stability"]
     fn test_clear_memory_stability() {
         let initial_memory = memory_stats::memory_stats().unwrap().physical_mem;
 
@@ -1485,12 +1642,93 @@ mod tests {
         }
 
         let final_memory = memory_stats::memory_stats().unwrap().physical_mem;
-
         let growth = final_memory.saturating_sub(initial_memory);
-        println!("Growth: {growth}");
+
+        println!("Memory growth: {growth} bytes");
         assert!(
             growth < 10_000_000,
-            "Memory grew by {growth} bytes over 10 cycles"
+            "Memory grew by {growth} bytes over test cycles (limit: 10MB)",
         );
+    }
+
+    #[test]
+    fn gclock_ref_saturates_and_decays() {
+        let mut c = PageCache::new(3);
+        let k = insert_page(&mut c, 1);
+
+        // No credit on insert.
+        assert_eq!(c.ref_of(&k), Some(RefBit::Clear));
+
+        // Three touches saturate to Max.
+        assert!(c.get(&k).unwrap().is_some());
+        assert!(c.get(&k).unwrap().is_some());
+        assert!(c.get(&k).unwrap().is_some());
+        assert_eq!(c.ref_of(&k), Some(RefBit::Max));
+
+        // Force three eviction passes; it should survive until credit drains.
+        insert_page(&mut c, 2); // pass 1, bump to Med and moved to head
+        assert_eq!(c.ref_of(&k), Some(RefBit::Med));
+        insert_page(&mut c, 3); // pass 2, Min
+        assert_eq!(c.ref_of(&k), Some(RefBit::Min));
+        insert_page(&mut c, 4); // pass 3, Clear then evict on next encounter
+                                // It got moved to head on pass 3; now force one more pass to evict it:
+        insert_page(&mut c, 5);
+        assert!(
+            c.get(&k).unwrap().is_none(),
+            "k should be evicted after credit drains"
+        );
+        c.verify_cache_integrity();
+    }
+
+    #[test]
+    fn gclock_hot_survives_scan_pages() {
+        let mut c = PageCache::new(4);
+        let _k1 = insert_page(&mut c, 1);
+        let k2 = insert_page(&mut c, 2);
+        let _k3 = insert_page(&mut c, 3);
+        let _k4 = insert_page(&mut c, 4);
+
+        // Make k2 truly hot: three real touches
+        for _ in 0..3 {
+            assert!(c.get(&k2).unwrap().is_some());
+        }
+        assert_eq!(c.ref_of(&k2), Some(RefBit::Max));
+
+        // Now simulate a scan inserting new pages 5..10 (one-hit wonders).
+        for id in 5..=10 {
+            let _ = insert_page(&mut c, id);
+        }
+
+        // Hot k2 should still be present; most single-hit scan pages should churn.
+        assert!(
+            c.get(&k2).unwrap().is_some(),
+            "hot page should survive scan"
+        );
+        // The earliest single-hit page should be gone.
+        assert!(c.get(&create_key(5)).unwrap().is_none());
+        c.verify_cache_integrity();
+    }
+
+    #[test]
+    fn resize_preserves_ref_and_recency() {
+        let mut c = PageCache::new(4);
+        let _k1 = insert_page(&mut c, 1);
+        let k2 = insert_page(&mut c, 2);
+        let _k3 = insert_page(&mut c, 3);
+        let _k4 = insert_page(&mut c, 4);
+        // Make k2 hot.
+        for _ in 0..3 {
+            assert!(c.get(&k2).unwrap().is_some());
+        }
+        let r_before = c.ref_of(&k2);
+
+        // Shrink to 3 (one page will be evicted during repack/next insert)
+        assert_eq!(c.resize(3), CacheResizeResult::Done);
+        assert_eq!(c.ref_of(&k2), r_before);
+
+        // Force an eviction; hot k2 should survive more passes.
+        let _ = insert_page(&mut c, 5);
+        assert!(c.get(&k2).unwrap().is_some());
+        c.verify_cache_integrity();
     }
 }
