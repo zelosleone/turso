@@ -213,7 +213,7 @@ impl InternalVirtualTableCursor for JsonEachCursor {
                 };
 
                 self.iterator_state = IteratorState::Object(new_state);
-                let key = key.to_string()?;
+                let key = key.to_string();
                 self.columns = Columns::new(columns::Key::String(key), value);
             }
             IteratorState::Primitive => {
@@ -368,7 +368,7 @@ mod columns {
                 | jsonb::ElementType::TEXTJ
                 | jsonb::ElementType::TEXT5
                 | jsonb::ElementType::TEXTRAW => {
-                    let s = value.to_string()?;
+                    let s = value.to_string();
                     let s = (s[1..s.len() - 1]).to_string();
                     Ok(Value::Text(Text::new(&s)))
                 }
@@ -383,14 +383,14 @@ mod columns {
         }
 
         fn jsonb_to_integer(value: &Jsonb) -> Result<Value, LimboError> {
-            let string = value.to_string()?;
+            let string = value.to_string();
             let int = string.parse::<i64>()?;
 
             Ok(Value::Integer(int))
         }
 
         fn jsonb_to_float(value: &Jsonb) -> Result<Value, LimboError> {
-            let string = value.to_string()?;
+            let string = value.to_string();
             let float = string.parse::<f64>()?;
 
             Ok(Value::Float(float))
