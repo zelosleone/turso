@@ -19,6 +19,7 @@ use crate::{
     vdbe::{builder::TableRefIdCounter, BranchOffset},
     Result,
 };
+use turso_macros::match_ignore_ascii_case;
 use turso_parser::ast::Literal::Null;
 use turso_parser::ast::{
     self, As, Expr, FromClause, JoinType, Limit, Literal, Materialized, QualifiedName,
@@ -114,11 +115,13 @@ pub fn bind_column_references(
             Expr::Id(id) => {
                 // true and false are special constants that are effectively aliases for 1 and 0
                 // and not identifiers of columns
-                if id.as_str().eq_ignore_ascii_case("true")
-                    || id.as_str().eq_ignore_ascii_case("false")
-                {
-                    return Ok(());
-                }
+                let id_bytes = id.as_str().as_bytes();
+                match_ignore_ascii_case!(match id_bytes {
+                    b"true" | b"false" => {
+                        return Ok(());
+                    }
+                    _ => {}
+                });
                 let normalized_id = normalize_ident(id.as_str());
 
                 if !referenced_tables.joined_tables().is_empty() {
@@ -1127,13 +1130,12 @@ pub fn parse_limit(limit: &Limit) -> Result<(Option<isize>, Option<isize>)> {
             crate::bail_parse_error!("Invalid LIMIT clause");
         }
     } else if let Expr::Id(id) = limit.expr.as_ref() {
-        if id.as_str().eq_ignore_ascii_case("true") {
-            Ok((Some(1), offset_val))
-        } else if id.as_str().eq_ignore_ascii_case("false") {
-            Ok((Some(0), offset_val))
-        } else {
-            crate::bail_parse_error!("Invalid LIMIT clause");
-        }
+        let id_bytes = id.as_str().as_bytes();
+        match_ignore_ascii_case!(match id_bytes {
+            b"true" => Ok((Some(1), offset_val)),
+            b"false" => Ok((Some(0), offset_val)),
+            _ => crate::bail_parse_error!("Invalid LIMIT clause"),
+        })
     } else {
         crate::bail_parse_error!("Invalid LIMIT clause");
     }

@@ -1763,25 +1763,24 @@ pub fn op_type_check(
             }
             let col_affinity = col.affinity();
             let ty_str = &col.ty_str;
+            let ty_bytes = ty_str.as_bytes();
             let applied = apply_affinity_char(reg, col_affinity);
             let value_type = reg.get_value().value_type();
-            match value_type {
-                ValueType::Integer
-                    if ty_str.eq_ignore_ascii_case("INTEGER")
-                        || ty_str.eq_ignore_ascii_case("INT") => {}
-                ValueType::Float if ty_str.eq_ignore_ascii_case("REAL") => {}
-                ValueType::Blob if ty_str.eq_ignore_ascii_case("BLOB") => {}
-                ValueType::Text if ty_str.eq_ignore_ascii_case("TEXT") => {}
-                _ if ty_str.eq_ignore_ascii_case("ANY") => {}
-                v => bail_constraint_error!(
+            match_ignore_ascii_case!(match ty_bytes {
+                b"INTEGER" | b"INT" if value_type == ValueType::Integer => {}
+                b"REAL" if value_type == ValueType::Float => {}
+                b"BLOB" if value_type == ValueType::Blob => {}
+                b"TEXT" if value_type == ValueType::Text => {}
+                b"ANY" => {}
+                _ => bail_constraint_error!(
                     "cannot store {} value in {} column {}.{} ({})",
-                    v,
+                    value_type,
                     ty_str,
                     &table_reference.name,
                     col.name.as_deref().unwrap_or(""),
                     SQLITE_CONSTRAINT
                 ),
-            };
+            });
             Ok(())
         })?;
 
