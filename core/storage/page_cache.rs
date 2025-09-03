@@ -16,9 +16,7 @@ const DEFAULT_PAGE_CACHE_SIZE_IN_PAGES_MAKE_ME_SMALLER_ONCE_WAL_SPILL_IS_IMPLEME
 #[repr(transparent)]
 pub struct PageCacheKey(usize);
 
-type SlotIndex = usize;
-
-const NULL: SlotIndex = usize::MAX;
+const NULL: usize = usize::MAX;
 
 #[derive(Clone, Copy, Debug)]
 /// To distinguish between a page touched by a scan vs a 'hot' page,
@@ -40,9 +38,9 @@ struct PageCacheEntry {
     /// Reference bit for SIEVE algorithm - set on access, cleared during eviction scan
     ref_bit: Cell<RefBit>,
     /// Index of next entry in SIEVE queue (newer/toward head)
-    next: Cell<SlotIndex>,
+    next: Cell<usize>,
     /// Index of previous entry in SIEVE queue (older/toward tail)
-    prev: Cell<SlotIndex>,
+    prev: Cell<usize>,
 }
 
 impl Default for PageCacheEntry {
@@ -108,15 +106,15 @@ impl PageCacheEntry {
 pub struct PageCache {
     /// Capacity in pages
     capacity: usize,
-    /// Map of Key -> SlotIndex in entries array
+    /// Map of Key -> usize in entries array
     map: PageHashMap,
     /// Pointers to intrusive doubly-linked list for eviction order
-    head: Cell<SlotIndex>,
-    tail: Cell<SlotIndex>,
+    head: Cell<usize>,
+    tail: Cell<usize>,
     /// Fixed-size vec holding page entries
     entries: Vec<PageCacheEntry>,
     /// Free list: Stack of available slot indices
-    freelist: Vec<SlotIndex>,
+    freelist: Vec<usize>,
 }
 
 unsafe impl Send for PageCache {}
@@ -173,7 +171,7 @@ impl PageCache {
     }
 
     #[inline]
-    fn link_front(&self, slot: SlotIndex) {
+    fn link_front(&self, slot: usize) {
         let old_head = self.head.replace(slot);
 
         self.entries[slot].next.set(old_head);
@@ -188,7 +186,7 @@ impl PageCache {
     }
 
     #[inline]
-    fn unlink(&self, slot: SlotIndex) {
+    fn unlink(&self, slot: usize) {
         let p = self.entries[slot].prev.get();
         let n = self.entries[slot].next.get();
 
@@ -207,7 +205,7 @@ impl PageCache {
     }
 
     #[inline]
-    fn move_to_front(&self, slot: SlotIndex) {
+    fn move_to_front(&self, slot: usize) {
         if self.head.get() == slot {
             return;
         }
@@ -777,7 +775,7 @@ impl Default for PageCache {
 #[derive(Clone)]
 struct HashMapNode {
     key: PageCacheKey,
-    slot_index: SlotIndex,
+    slot_index: usize,
 }
 
 #[allow(dead_code)]
@@ -790,7 +788,7 @@ impl PageHashMap {
         }
     }
 
-    pub fn insert(&mut self, key: PageCacheKey, slot_index: SlotIndex) {
+    pub fn insert(&mut self, key: PageCacheKey, slot_index: usize) {
         let bucket = self.hash(&key);
         let bucket = &mut self.buckets[bucket];
         let mut idx = 0;
@@ -811,7 +809,7 @@ impl PageHashMap {
         self.buckets[bucket].iter().any(|node| node.key == *key)
     }
 
-    pub fn get(&self, key: &PageCacheKey) -> Option<SlotIndex> {
+    pub fn get(&self, key: &PageCacheKey) -> Option<usize> {
         let bucket = self.hash(key);
         let bucket = &self.buckets[bucket];
         for node in bucket {
@@ -822,7 +820,7 @@ impl PageHashMap {
         None
     }
 
-    pub fn remove(&mut self, key: &PageCacheKey) -> Option<SlotIndex> {
+    pub fn remove(&mut self, key: &PageCacheKey) -> Option<usize> {
         let bucket = self.hash(key);
         let bucket = &mut self.buckets[bucket];
         let mut idx = 0;
@@ -1666,11 +1664,11 @@ mod tests {
         for _ in 0..3 {
             assert!(c.get(&k2).unwrap().is_some());
         }
-        let r_before = c.ref_of(&k2);
+        let _r_before = c.ref_of(&k2);
 
         // Shrink to 3 (one page will be evicted during repack/next insert)
         assert_eq!(c.resize(3), CacheResizeResult::Done);
-        assert!(matches!(c.ref_of(&k2), r_before));
+        assert!(matches!(c.ref_of(&k2), _r_before));
 
         // Force an eviction; hot k2 should survive more passes.
         let _ = insert_page(&mut c, 5);
