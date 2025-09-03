@@ -63,6 +63,7 @@ pub use io::{
 };
 use parking_lot::RwLock;
 use schema::Schema;
+use turso_macros::match_ignore_ascii_case;
 use std::{
     borrow::Cow,
     cell::{Cell, RefCell, UnsafeCell},
@@ -1911,21 +1912,23 @@ impl Connection {
         // Check if this is a qualified name (database.table) or unqualified
         if let Some(db_name) = &qualified_name.db_name {
             let db_name_normalized = normalize_ident(db_name.as_str());
-
-            if db_name_normalized.eq_ignore_ascii_case("main") {
-                Ok(0)
-            } else if db_name_normalized.eq_ignore_ascii_case("temp") {
-                Ok(1)
-            } else {
-                // Look up attached database
-                if let Some((idx, _attached_db)) = self.get_attached_database(&db_name_normalized) {
-                    Ok(idx)
-                } else {
-                    Err(LimboError::InvalidArgument(format!(
-                        "no such database: {db_name_normalized}"
-                    )))
+            let name_bytes = db_name_normalized.as_bytes();
+            match_ignore_ascii_case!(match name_bytes {
+                b"main" => Ok(0),
+                b"temp" => Ok(1),
+                _ => {
+                    // Look up attached database
+                    if let Some((idx, _attached_db)) =
+                        self.get_attached_database(&db_name_normalized)
+                    {
+                        Ok(idx)
+                    } else {
+                        Err(LimboError::InvalidArgument(format!(
+                            "no such database: {db_name_normalized}"
+                        )))
+                    }
                 }
-            }
+            })
         } else {
             // Unqualified table name - use main database
             Ok(0)
