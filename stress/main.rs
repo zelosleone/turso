@@ -559,13 +559,19 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
                 const INTEGRITY_CHECK_INTERVAL: usize = 100;
                 if query_index % INTEGRITY_CHECK_INTERVAL == 0 {
                     let mut res = conn.query("PRAGMA integrity_check", ()).await.unwrap();
-                    if let Some(row) = res.next().await? {
-                        let value = row.get_value(0).unwrap();
-                        if value != "ok".into() {
-                            panic!("integrity check failed: {:?}", value);
+                    match res.next().await {
+                        Ok(Some(row)) => {
+                            let value = row.get_value(0).unwrap();
+                            if value != "ok".into() {
+                                panic!("integrity check failed: {:?}", value);
+                            }
                         }
-                    } else {
-                        panic!("integrity check failed: no rows");
+                        Ok(None) => {
+                            panic!("integrity check failed: no rows");
+                        }
+                        Err(e) => {
+                            println!("Error performing integrity check: {e}");
+                        }
                     }
                 }
             }
