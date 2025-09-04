@@ -2,7 +2,9 @@
 use crate::function::AlterTableFunc;
 use crate::numeric::{NullableInteger, Numeric};
 use crate::schema::Table;
-use crate::storage::btree::{integrity_check, IntegrityCheckError, IntegrityCheckState};
+use crate::storage::btree::{
+    integrity_check, IntegrityCheckError, IntegrityCheckState, PageCategory,
+};
 use crate::storage::database::DatabaseFile;
 use crate::storage::page_cache::DumbLruPageCache;
 use crate::storage::pager::{AtomicDbState, CreateBTreeFlags, DbState};
@@ -37,6 +39,7 @@ use std::{
     rc::Rc,
     sync::{Arc, Mutex},
 };
+use turso_macros::match_ignore_ascii_case;
 
 use crate::{pseudo::PseudoCursor, result::LimboResult};
 
@@ -71,7 +74,6 @@ use super::{
 use parking_lot::RwLock;
 use rand::{thread_rng, Rng};
 use turso_parser::ast;
-use turso_parser::ast::fmt::ToTokens;
 use turso_parser::parser::Parser;
 
 use super::{
@@ -1760,24 +1762,25 @@ pub fn op_type_check(
                 return Ok(());
             }
             let col_affinity = col.affinity();
-            let ty_str = col.ty_str.as_str();
+            let ty_str = &col.ty_str;
+            let ty_bytes = ty_str.as_bytes();
             let applied = apply_affinity_char(reg, col_affinity);
             let value_type = reg.get_value().value_type();
-            match (ty_str, value_type) {
-                ("INTEGER" | "INT", ValueType::Integer) => {}
-                ("REAL", ValueType::Float) => {}
-                ("BLOB", ValueType::Blob) => {}
-                ("TEXT", ValueType::Text) => {}
-                ("ANY", _) => {}
-                (t, v) => bail_constraint_error!(
+            match_ignore_ascii_case!(match ty_bytes {
+                b"INTEGER" | b"INT" if value_type == ValueType::Integer => {}
+                b"REAL" if value_type == ValueType::Float => {}
+                b"BLOB" if value_type == ValueType::Blob => {}
+                b"TEXT" if value_type == ValueType::Text => {}
+                b"ANY" => {}
+                _ => bail_constraint_error!(
                     "cannot store {} value in {} column {}.{} ({})",
-                    v,
-                    t,
+                    value_type,
+                    ty_str,
                     &table_reference.name,
                     col.name.as_deref().unwrap_or(""),
                     SQLITE_CONSTRAINT
                 ),
-            };
+            });
             Ok(())
         })?;
 
@@ -4456,10 +4459,16 @@ pub fn op_function(
                 }
             }
             ScalarFunc::SqliteVersion => {
-                let version_integer =
-                    return_if_io!(pager.with_header(|header| header.version_number)).get() as i64;
-                let version = execute_sqlite_version(version_integer);
-                state.registers[*dest] = Register::Value(Value::build_text(version));
+                if !program.connection.is_db_initialized() {
+                    state.registers[*dest] =
+                        Register::Value(Value::build_text(info::build::PKG_VERSION));
+                } else {
+                    let version_integer =
+                        return_if_io!(pager.with_header(|header| header.version_number)).get()
+                            as i64;
+                    let version = execute_sqlite_version(version_integer);
+                    state.registers[*dest] = Register::Value(Value::build_text(version));
+                }
             }
             ScalarFunc::SqliteSourceId => {
                 let src_id = format!(
@@ -4847,10 +4856,10 @@ pub fn op_function(
 
                         match stmt {
                             ast::Stmt::CreateIndex {
+                                tbl_name,
                                 unique,
                                 if_not_exists,
                                 idx_name,
-                                tbl_name,
                                 columns,
                                 where_clause,
                             } => {
@@ -4862,21 +4871,20 @@ pub fn op_function(
 
                                 Some(
                                     ast::Stmt::CreateIndex {
+                                        tbl_name: ast::Name::new(&rename_to),
                                         unique,
                                         if_not_exists,
                                         idx_name,
-                                        tbl_name: ast::Name::new(&rename_to),
                                         columns,
                                         where_clause,
                                     }
-                                    .format()
-                                    .unwrap(),
+                                    .to_string(),
                                 )
                             }
                             ast::Stmt::CreateTable {
+                                tbl_name,
                                 temporary,
                                 if_not_exists,
-                                tbl_name,
                                 body,
                             } => {
                                 let table_name = normalize_ident(tbl_name.name.as_str());
@@ -4887,17 +4895,16 @@ pub fn op_function(
 
                                 Some(
                                     ast::Stmt::CreateTable {
-                                        temporary,
-                                        if_not_exists,
                                         tbl_name: ast::QualifiedName {
                                             db_name: None,
                                             name: ast::Name::new(&rename_to),
                                             alias: None,
                                         },
+                                        temporary,
+                                        if_not_exists,
                                         body,
                                     }
-                                    .format()
-                                    .unwrap(),
+                                    .to_string(),
                                 )
                             }
                             _ => todo!(),
@@ -4906,7 +4913,7 @@ pub fn op_function(
 
                     (new_name, new_tbl_name, new_sql)
                 }
-                AlterTableFunc::RenameColumn => {
+                AlterTableFunc::AlterColumn | AlterTableFunc::RenameColumn => {
                     let table = {
                         match &state.registers[*start_reg + 5].get_value() {
                             Value::Text(rename_to) => normalize_ident(rename_to.as_str()),
@@ -4921,12 +4928,16 @@ pub fn op_function(
                         }
                     };
 
-                    let rename_to = {
+                    let column_def = {
                         match &state.registers[*start_reg + 7].get_value() {
-                            Value::Text(rename_to) => normalize_ident(rename_to.as_str()),
+                            Value::Text(column_def) => column_def.as_str(),
                             _ => panic!("rename_to parameter should be TEXT"),
                         }
                     };
+
+                    let column_def = Parser::new(column_def.as_bytes())
+                        .parse_column_definition(true)
+                        .unwrap();
 
                     let new_sql = 'sql: {
                         if table != tbl_name {
@@ -4944,11 +4955,11 @@ pub fn op_function(
 
                         match stmt {
                             ast::Stmt::CreateIndex {
+                                tbl_name,
+                                mut columns,
                                 unique,
                                 if_not_exists,
                                 idx_name,
-                                tbl_name,
-                                mut columns,
                                 where_clause,
                             } => {
                                 if table != normalize_ident(tbl_name.as_str()) {
@@ -4960,7 +4971,7 @@ pub fn op_function(
                                         ast::Expr::Id(ast::Name::Ident(id))
                                             if normalize_ident(id) == rename_from =>
                                         {
-                                            *id = rename_to.clone();
+                                            *id = column_def.col_name.as_str().to_owned();
                                         }
                                         _ => {}
                                     }
@@ -4968,22 +4979,21 @@ pub fn op_function(
 
                                 Some(
                                     ast::Stmt::CreateIndex {
+                                        tbl_name,
+                                        columns,
                                         unique,
                                         if_not_exists,
                                         idx_name,
-                                        tbl_name,
-                                        columns,
                                         where_clause,
                                     }
-                                    .format()
-                                    .unwrap(),
+                                    .to_string(),
                                 )
                             }
                             ast::Stmt::CreateTable {
-                                temporary,
-                                if_not_exists,
                                 tbl_name,
                                 body,
+                                temporary,
+                                if_not_exists,
                             } => {
                                 if table != normalize_ident(tbl_name.name.as_str()) {
                                     break 'sql None;
@@ -5003,21 +5013,26 @@ pub fn op_function(
                                     .find(|column| column.col_name == ast::Name::new(&rename_from))
                                     .expect("column being renamed should be present");
 
-                                column.col_name = ast::Name::new(&rename_to);
+                                match alter_func {
+                                    AlterTableFunc::AlterColumn => *column = column_def,
+                                    AlterTableFunc::RenameColumn => {
+                                        column.col_name = column_def.col_name
+                                    }
+                                    _ => unreachable!(),
+                                }
 
                                 Some(
                                     ast::Stmt::CreateTable {
-                                        temporary,
-                                        if_not_exists,
                                         tbl_name,
                                         body: ast::CreateTableBody::ColumnsAndConstraints {
                                             columns,
                                             constraints,
                                             options,
                                         },
+                                        temporary,
+                                        if_not_exists,
                                     }
-                                    .format()
-                                    .unwrap(),
+                                    .to_string(),
                                 )
                             }
                             _ => todo!(),
@@ -5177,11 +5192,12 @@ pub fn op_insert(
         match &state.op_insert_state.sub_state {
             OpInsertSubState::MaybeCaptureRecord => {
                 let schema = program.connection.schema.borrow();
-                let dependent_views = schema.get_dependent_materialized_views(table_name);
+                let dependent_views =
+                    schema.get_dependent_materialized_views_unnormalized(table_name);
                 // If there are no dependent views, we don't need to capture the old record.
                 // We also don't need to do it if the rowid of the UPDATEd row was changed, because that means
                 // we deleted it earlier and `op_delete` already captured the change.
-                if dependent_views.is_empty() || flag.has(InsertFlags::UPDATE_ROWID_CHANGE) {
+                if dependent_views.is_none() || flag.has(InsertFlags::UPDATE_ROWID_CHANGE) {
                     if flag.has(InsertFlags::REQUIRE_SEEK) {
                         state.op_insert_state.sub_state = OpInsertSubState::Seek;
                     } else {
@@ -5287,8 +5303,9 @@ pub fn op_insert(
                     state.op_insert_state.sub_state = OpInsertSubState::UpdateLastRowid;
                 } else {
                     let schema = program.connection.schema.borrow();
-                    let dependent_views = schema.get_dependent_materialized_views(table_name);
-                    if !dependent_views.is_empty() {
+                    let dependent_views =
+                        schema.get_dependent_materialized_views_unnormalized(table_name);
+                    if dependent_views.is_some() {
                         state.op_insert_state.sub_state = OpInsertSubState::ApplyViewChange;
                     } else {
                         break;
@@ -5308,8 +5325,9 @@ pub fn op_insert(
                     program.n_change.set(prev_changes + 1);
                 }
                 let schema = program.connection.schema.borrow();
-                let dependent_views = schema.get_dependent_materialized_views(table_name);
-                if !dependent_views.is_empty() {
+                let dependent_views =
+                    schema.get_dependent_materialized_views_unnormalized(table_name);
+                if dependent_views.is_some() {
                     state.op_insert_state.sub_state = OpInsertSubState::ApplyViewChange;
                     continue;
                 }
@@ -5317,8 +5335,10 @@ pub fn op_insert(
             }
             OpInsertSubState::ApplyViewChange => {
                 let schema = program.connection.schema.borrow();
-                let dependent_views = schema.get_dependent_materialized_views(table_name);
-                assert!(!dependent_views.is_empty());
+                let dependent_views =
+                    schema.get_dependent_materialized_views_unnormalized(table_name);
+                assert!(dependent_views.is_some());
+                let dependent_views = dependent_views.unwrap();
 
                 let (key, values) = {
                     let mut cursor = state.get_cursor(*cursor_id);
@@ -6660,9 +6680,7 @@ pub fn op_zero_or_null(
     mv_store: Option<&Arc<MvStore>>,
 ) -> Result<InsnFunctionStepResult> {
     load_insn!(ZeroOrNull { rg1, rg2, dest }, insn);
-    if *state.registers[*rg1].get_value() == Value::Null
-        || *state.registers[*rg2].get_value() == Value::Null
-    {
+    if state.registers[*rg1].is_null() || state.registers[*rg2].is_null() {
         state.registers[*dest] = Register::Value(Value::Null)
     } else {
         state.registers[*dest] = Register::Value(Value::Integer(0));
@@ -7108,10 +7126,26 @@ pub fn op_integrity_check(
     );
     match &mut state.op_integrity_check_state {
         OpIntegrityCheckState::Start => {
+            let freelist_trunk_page =
+                return_if_io!(pager.with_header(|header| header.freelist_trunk_page.get()));
+            let mut errors = Vec::new();
+            let mut integrity_check_state = IntegrityCheckState::new();
+            let mut current_root_idx = 0;
+            // check freelist pages first, if there are any for database
+            if freelist_trunk_page > 0 {
+                integrity_check_state.start(
+                    freelist_trunk_page as usize,
+                    PageCategory::FreeListTrunk,
+                    &mut errors,
+                );
+            } else {
+                integrity_check_state.start(roots[0], PageCategory::Normal, &mut errors);
+                current_root_idx += 1;
+            }
             state.op_integrity_check_state = OpIntegrityCheckState::Checking {
-                errors: Vec::new(),
-                current_root_idx: 0,
-                state: IntegrityCheckState::new(roots[0]),
+                errors,
+                state: integrity_check_state,
+                current_root_idx,
             };
         }
         OpIntegrityCheckState::Checking {
@@ -7120,9 +7154,9 @@ pub fn op_integrity_check(
             state: integrity_check_state,
         } => {
             return_if_io!(integrity_check(integrity_check_state, errors, pager));
-            *current_root_idx += 1;
             if *current_root_idx < roots.len() {
-                *integrity_check_state = IntegrityCheckState::new(roots[*current_root_idx]);
+                integrity_check_state.start(roots[*current_root_idx], PageCategory::Normal, errors);
+                *current_root_idx += 1;
                 return Ok(InsnFunctionStepResult::Step);
             } else {
                 let message = if errors.is_empty() {
@@ -7279,7 +7313,7 @@ pub fn op_add_column(
     Ok(InsnFunctionStepResult::Step)
 }
 
-pub fn op_rename_column(
+pub fn op_alter_column(
     program: &Program,
     state: &mut ProgramState,
     insn: &Insn,
@@ -7287,15 +7321,18 @@ pub fn op_rename_column(
     mv_store: Option<&Arc<MvStore>>,
 ) -> Result<InsnFunctionStepResult> {
     load_insn!(
-        RenameColumn {
+        AlterColumn {
             table: table_name,
             column_index,
-            name
+            definition,
+            rename,
         },
         insn
     );
 
     let conn = program.connection.clone();
+
+    let new_column = crate::schema::Column::from(definition);
 
     conn.with_schema_mut(|schema| {
         let table = schema
@@ -7323,13 +7360,17 @@ pub fn op_rename_column(
                     if index_column.name
                         == *column.name.as_ref().expect("btree column should be named")
                     {
-                        index_column.name = name.to_owned();
+                        index_column.name = definition.col_name.as_str().to_owned();
                     }
                 }
             }
         }
 
-        column.name = Some(name.to_owned());
+        if *rename {
+            column.name = new_column.name;
+        } else {
+            *column = new_column;
+        }
     });
 
     state.pc += 1;
@@ -8812,11 +8853,11 @@ pub fn op_journal_mode(
     // Currently, Turso only supports WAL mode
     // If a new mode is specified, we validate it but always return "wal"
     if let Some(mode) = new_mode {
-        let mode_lower = mode.to_lowercase();
+        let mode_bytes = mode.as_bytes();
         // Valid journal modes in SQLite are: delete, truncate, persist, memory, wal, off
         // We accept any valid mode but always use WAL
-        match mode_lower.as_str() {
-            "delete" | "truncate" | "persist" | "memory" | "wal" | "off" => {
+        match_ignore_ascii_case!(match mode_bytes {
+            b"delete" | b"truncate" | b"persist" | b"memory" | b"wal" | b"off" => {
                 // Mode is valid, but we stay in WAL mode
             }
             _ => {
@@ -8825,7 +8866,7 @@ pub fn op_journal_mode(
                     "Unknown journal mode: {mode}"
                 )));
             }
-        }
+        })
     }
 
     // Always return "wal" as the current journal mode

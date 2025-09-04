@@ -13,6 +13,7 @@ use std::{
     sync::{Arc, Mutex},
 };
 use tracing::{instrument, Level};
+use turso_macros::match_ignore_ascii_case;
 use turso_parser::ast::{
     self, fmt::ToTokens, Cmd, CreateTableBody, Expr, FunctionTail, Literal, Stmt, UnaryOperator,
 };
@@ -29,6 +30,58 @@ macro_rules! io_yield_many {
     ($v:expr) => {
         return Ok(IOResult::IO(IOCompletions::Many($v)));
     };
+}
+
+#[macro_export]
+macro_rules! eq_ignore_ascii_case {
+    ( $var:expr, $value:literal ) => {{
+        match_ignore_ascii_case!(match $var {
+            $value => true,
+            _ => false,
+        })
+    }};
+}
+
+#[macro_export]
+macro_rules! contains_ignore_ascii_case {
+    ( $var:expr, $value:literal ) => {{
+        let compare_to_idx = $var.len().saturating_sub($value.len());
+        if $var.len() < $value.len() {
+            false
+        } else {
+            let mut result = false;
+            for i in 0..=compare_to_idx {
+                if eq_ignore_ascii_case!(&$var[i..i + $value.len()], $value) {
+                    result = true;
+                    break;
+                }
+            }
+
+            result
+        }
+    }};
+}
+
+#[macro_export]
+macro_rules! starts_with_ignore_ascii_case {
+    ( $var:expr, $value:literal ) => {{
+        if $var.len() < $value.len() {
+            false
+        } else {
+            eq_ignore_ascii_case!(&$var[..$value.len()], $value)
+        }
+    }};
+}
+
+#[macro_export]
+macro_rules! ends_with_ignore_ascii_case {
+    ( $var:expr, $value:literal ) => {{
+        if $var.len() < $value.len() {
+            false
+        } else {
+            eq_ignore_ascii_case!(&$var[$var.len() - $value.len()..], $value)
+        }
+    }};
 }
 
 pub trait IOExt {
@@ -58,7 +111,12 @@ impl RoundToPrecision for f64 {
 }
 
 // https://sqlite.org/lang_keywords.html
-const QUOTE_PAIRS: &[(char, char)] = &[('"', '"'), ('[', ']'), ('`', '`')];
+const QUOTE_PAIRS: &[(char, char)] = &[
+    ('"', '"'),
+    ('[', ']'),
+    ('`', '`'),
+    ('\'', '\''), // string sometimes used as identifier quoting
+];
 
 pub fn normalize_ident(identifier: &str) -> String {
     let quote_pair = QUOTE_PAIRS
@@ -105,14 +163,14 @@ pub fn parse_schema_rows(
             StepResult::Row => {
                 let row = rows.row().unwrap();
                 let ty = row.get::<&str>(0)?;
-                if !["table", "index", "view"].contains(&ty) {
-                    continue;
-                }
                 match ty {
                     "table" => {
                         let root_page: i64 = row.get::<i64>(3)?;
                         let sql: &str = row.get::<&str>(4)?;
-                        if root_page == 0 && sql.to_lowercase().contains("create virtual") {
+                        let sql_bytes = sql.as_bytes();
+                        if root_page == 0
+                            && contains_ignore_ascii_case!(sql_bytes, b"create virtual")
+                        {
                             let name: &str = row.get::<&str>(1)?;
                             // a virtual table is found in the sqlite_schema, but it's no
                             // longer in the in-memory schema. We need to recreate it if
@@ -609,6 +667,36 @@ pub fn exprs_are_equivalent(expr1: &Expr, expr2: &Expr) -> bool {
     }
 }
 
+// this function returns the affinity type and whether the type name was exactly "INTEGER"
+// https://www.sqlite.org/datatype3.html
+pub(crate) fn type_from_name(type_name: &str) -> (Type, bool) {
+    let type_name = type_name.as_bytes();
+    if type_name.is_empty() {
+        return (Type::Blob, false);
+    }
+
+    if eq_ignore_ascii_case!(type_name, b"INTEGER") {
+        return (Type::Integer, true);
+    }
+
+    if let Some(ty) = type_name.windows(4).find_map(|s| {
+        if contains_ignore_ascii_case!(s, b"INT") {
+            return Some(Type::Integer);
+        }
+
+        match_ignore_ascii_case!(match s {
+            b"CHAR" | b"CLOB" | b"TEXT" => Some(Type::Text),
+            b"BLOB" => Some(Type::Blob),
+            b"REAL" | b"FLOA" | b"DOUB" => Some(Type::Real),
+            _ => None,
+        })
+    }) {
+        return (ty, false);
+    }
+
+    (Type::Numeric, false)
+}
+
 pub fn columns_from_create_table_body(
     body: &turso_parser::ast::CreateTableBody,
 ) -> crate::Result<Vec<Column>> {
@@ -620,78 +708,7 @@ pub fn columns_from_create_table_body(
 
     use turso_parser::ast;
 
-    Ok(columns
-        .iter()
-        .map(
-            |ast::ColumnDefinition {
-                 col_name: name,
-                 col_type,
-                 constraints,
-             }| {
-                Column {
-                    name: Some(normalize_ident(name.as_str())),
-                    ty: match col_type {
-                        Some(ref data_type) => {
-                            // https://www.sqlite.org/datatype3.html
-                            let type_name = data_type.name.as_str().to_uppercase();
-                            if type_name.contains("INT") {
-                                Type::Integer
-                            } else if type_name.contains("CHAR")
-                                || type_name.contains("CLOB")
-                                || type_name.contains("TEXT")
-                            {
-                                Type::Text
-                            } else if type_name.contains("BLOB") || type_name.is_empty() {
-                                Type::Blob
-                            } else if type_name.contains("REAL")
-                                || type_name.contains("FLOA")
-                                || type_name.contains("DOUB")
-                            {
-                                Type::Real
-                            } else {
-                                Type::Numeric
-                            }
-                        }
-                        None => Type::Null,
-                    },
-                    default: constraints.iter().find_map(|c| match &c.constraint {
-                        ast::ColumnConstraint::Default(val) => Some(val.clone()),
-                        _ => None,
-                    }),
-                    notnull: constraints
-                        .iter()
-                        .any(|c| matches!(c.constraint, ast::ColumnConstraint::NotNull { .. })),
-                    ty_str: col_type
-                        .clone()
-                        .map(|t| t.name.to_string())
-                        .unwrap_or_default(),
-                    primary_key: constraints
-                        .iter()
-                        .any(|c| matches!(c.constraint, ast::ColumnConstraint::PrimaryKey { .. })),
-                    is_rowid_alias: false,
-                    unique: constraints
-                        .iter()
-                        .any(|c| matches!(c.constraint, ast::ColumnConstraint::Unique(..))),
-                    collation: constraints.iter().find_map(|c| match &c.constraint {
-                        // TODO: see if this should be the correct behavior
-                        // currently there cannot be any user defined collation sequences.
-                        // But in the future, when a user defines a collation sequence, creates a table with it,
-                        // then closes the db and opens it again. This may panic here if the collation seq is not registered
-                        // before reading the columns
-                        ast::ColumnConstraint::Collate { collation_name } => Some(
-                            CollationSeq::new(collation_name.as_str())
-                                .expect("collation should have been set correctly in create table"),
-                        ),
-                        _ => None,
-                    }),
-                    hidden: col_type
-                        .as_ref()
-                        .map(|data_type| data_type.name.as_str().contains("HIDDEN"))
-                        .unwrap_or(false),
-                }
-            },
-        )
-        .collect::<Vec<_>>())
+    Ok(columns.iter().map(Into::into).collect())
 }
 
 /// This function checks if a given expression is a constant value that can be pushed down to the database engine.
@@ -740,6 +757,10 @@ pub struct OpenOptions<'a> {
     pub cache: CacheMode,
     /// immutable=1|0 specifies that the database is stored on read-only media
     pub immutable: bool,
+    // The encryption cipher
+    pub cipher: Option<String>,
+    // The encryption key in hex format
+    pub hexkey: Option<String>,
 }
 
 pub const MEMORY_PATH: &str = ":memory:";
@@ -772,15 +793,16 @@ impl From<&str> for CacheMode {
 
 impl OpenMode {
     pub fn from_str(s: &str) -> Result<Self> {
-        match s.trim().to_lowercase().as_str() {
-            "ro" => Ok(OpenMode::ReadOnly),
-            "rw" => Ok(OpenMode::ReadWrite),
-            "memory" => Ok(OpenMode::Memory),
-            "rwc" => Ok(OpenMode::ReadWriteCreate),
+        let s_bytes = s.trim().as_bytes();
+        match_ignore_ascii_case!(match s_bytes {
+            b"ro" => Ok(OpenMode::ReadOnly),
+            b"rw" => Ok(OpenMode::ReadWrite),
+            b"memory" => Ok(OpenMode::Memory),
+            b"rwc" => Ok(OpenMode::ReadWriteCreate),
             _ => Err(LimboError::InvalidArgument(format!(
                 "Invalid mode: '{s}'. Expected one of 'ro', 'rw', 'memory', 'rwc'"
             ))),
-        }
+        })
     }
 }
 
@@ -890,6 +912,8 @@ fn parse_query_params(query: &str, opts: &mut OpenOptions) -> Result<()> {
                 "cache" => opts.cache = decoded_value.as_str().into(),
                 "immutable" => opts.immutable = decoded_value == "1",
                 "vfs" => opts.vfs = Some(decoded_value),
+                "cipher" => opts.cipher = Some(decoded_value),
+                "hexkey" => opts.hexkey = Some(decoded_value),
                 _ => {}
             }
         }
@@ -1111,7 +1135,11 @@ pub fn cast_real_to_integer(float: f64) -> std::result::Result<i64, ()> {
 // we don't need to verify the numeric literal here, as it is already verified by the parser
 pub fn parse_numeric_literal(text: &str) -> Result<Value> {
     // a single extra underscore ("_") character can exist between any two digits
-    let text = text.replace("_", "");
+    let text = if text.contains('_') {
+        std::borrow::Cow::Owned(text.replace('_', ""))
+    } else {
+        std::borrow::Cow::Borrowed(text)
+    };
 
     if text.starts_with("0x") || text.starts_with("0X") {
         let value = u64::from_str_radix(&text[2..], 16)? as i64;
@@ -1233,7 +1261,7 @@ pub fn extract_view_columns(select_stmt: &ast::Select, schema: &Schema) -> Vec<C
                         .or_else(|| extract_column_name_from_expr(expr))
                         .unwrap_or_else(|| {
                             // If we can't extract a simple column name, use the expression itself
-                            expr.format().unwrap_or_else(|_| format!("column_{i}"))
+                            expr.to_string()
                         });
                     columns.push(Column {
                         name: Some(name),

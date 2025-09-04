@@ -4,6 +4,7 @@
 use chrono::Datelike;
 use std::rc::Rc;
 use std::sync::Arc;
+use turso_macros::match_ignore_ascii_case;
 use turso_parser::ast::{self, ColumnDefinition, Expr, Literal, Name};
 use turso_parser::ast::{PragmaName, QualifiedName};
 
@@ -213,17 +214,17 @@ fn update_pragma(
         PragmaName::AutoVacuum => {
             let auto_vacuum_mode = match value {
                 Expr::Name(name) => {
-                    let name = name.as_str().to_lowercase();
-                    match name.as_str() {
-                        "none" => 0,
-                        "full" => 1,
-                        "incremental" => 2,
+                    let name = name.as_str().as_bytes();
+                    match_ignore_ascii_case!(match name {
+                        b"none" => 0,
+                        b"full" => 1,
+                        b"incremental" => 2,
                         _ => {
                             return Err(LimboError::InvalidArgument(
                                 "invalid auto vacuum mode".to_string(),
                             ));
                         }
-                    }
+                    })
                 }
                 _ => {
                     return Err(LimboError::InvalidArgument(
@@ -289,6 +290,7 @@ fn update_pragma(
                     true,
                     schema,
                     syms,
+                    &connection,
                     program,
                 )?;
             }
@@ -322,6 +324,27 @@ fn update_pragma(
             let value = parse_string(&value)?;
             let cipher = CipherMode::try_from(value.as_str())?;
             connection.set_encryption_cipher(cipher);
+            Ok((program, TransactionMode::None))
+        }
+        PragmaName::Synchronous => {
+            use crate::SyncMode;
+
+            let mode = match value {
+                Expr::Name(name) => {
+                    let name_bytes = name.as_str().as_bytes();
+                    match_ignore_ascii_case!(match name_bytes {
+                        b"OFF" | b"FALSE" | b"NO" | b"0" => SyncMode::Off,
+                        _ => SyncMode::Full,
+                    })
+                }
+                Expr::Literal(Literal::Numeric(n)) => match n.as_str() {
+                    "0" => SyncMode::Off,
+                    _ => SyncMode::Full,
+                },
+                _ => SyncMode::Full,
+            };
+
+            connection.set_sync_mode(mode);
             Ok((program, TransactionMode::None))
         }
     }
@@ -552,8 +575,11 @@ fn query_pragma(
                     ast::Expr::Literal(Literal::Numeric(i)) => i.parse::<i64>().unwrap() != 0,
                     ast::Expr::Literal(Literal::String(ref s))
                     | ast::Expr::Name(Name::Ident(ref s)) => {
-                        let s = s.to_lowercase();
-                        s == "1" || s == "on" || s == "true"
+                        let s = s.as_bytes();
+                        match_ignore_ascii_case!(match s {
+                            b"1" | b"on" | b"true" => true,
+                            _ => false,
+                        })
                     }
                     _ => {
                         return Err(LimboError::ParseError(format!(
@@ -602,6 +628,14 @@ fn query_pragma(
                 program.emit_result_row(register, 1);
                 program.add_pragma_result_column(pragma.to_string());
             }
+            Ok((program, TransactionMode::None))
+        }
+        PragmaName::Synchronous => {
+            let mode = connection.get_sync_mode();
+            let register = program.alloc_register();
+            program.emit_int(mode as i64, register);
+            program.emit_result_row(register, 1);
+            program.add_pragma_result_column(pragma.to_string());
             Ok((program, TransactionMode::None))
         }
     }

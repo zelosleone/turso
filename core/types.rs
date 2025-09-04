@@ -14,7 +14,7 @@ use crate::translate::plan::IterationDirection;
 use crate::vdbe::sorter::Sorter;
 use crate::vdbe::Register;
 use crate::vtab::VirtualTableCursor;
-use crate::{turso_assert, Completion, Result, IO};
+use crate::{turso_assert, Completion, CompletionError, Result, IO};
 use std::fmt::{Debug, Display};
 
 const MAX_REAL_SIZE: u8 = 15;
@@ -347,6 +347,13 @@ impl Value {
         match self {
             Value::Integer(i) => Some(*i),
             _ => None,
+        }
+    }
+
+    pub fn as_uint(&self) -> u64 {
+        match self {
+            Value::Integer(i) => (*i).cast_unsigned(),
+            _ => 0,
         }
     }
 
@@ -2480,8 +2487,15 @@ impl IOCompletions {
         match self {
             IOCompletions::Single(c) => io.wait_for_completion(c),
             IOCompletions::Many(completions) => {
-                for c in completions {
-                    io.wait_for_completion(c)?;
+                let mut completions = completions.into_iter();
+                while let Some(c) = completions.next() {
+                    let res = io.wait_for_completion(c);
+                    if res.is_err() {
+                        for c in completions {
+                            c.abort();
+                        }
+                        return res;
+                    }
                 }
                 Ok(())
             }
@@ -2500,6 +2514,13 @@ impl IOCompletions {
         match self {
             IOCompletions::Single(c) => c.abort(),
             IOCompletions::Many(completions) => completions.iter().for_each(|c| c.abort()),
+        }
+    }
+
+    pub fn get_error(&self) -> Option<CompletionError> {
+        match self {
+            IOCompletions::Single(c) => c.get_error(),
+            IOCompletions::Many(completions) => completions.iter().find_map(|c| c.get_error()),
         }
     }
 }

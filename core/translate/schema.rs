@@ -28,8 +28,8 @@ use crate::SymbolTable;
 use crate::{bail_parse_error, Result};
 
 use turso_ext::VTabKind;
-use turso_parser::ast::fmt::ToTokens;
 
+#[allow(clippy::too_many_arguments)]
 pub fn translate_create_table(
     tbl_name: ast::QualifiedName,
     temporary: bool,
@@ -37,10 +37,21 @@ pub fn translate_create_table(
     if_not_exists: bool,
     schema: &Schema,
     syms: &SymbolTable,
+    connection: &Arc<crate::Connection>,
     mut program: ProgramBuilder,
 ) -> Result<ProgramBuilder> {
     if temporary {
         bail_parse_error!("TEMPORARY table not supported yet");
+    }
+
+    // Check for STRICT mode without experimental flag
+    if let ast::CreateTableBody::ColumnsAndConstraints { options, .. } = &body {
+        if options.contains(ast::TableOptions::STRICT) && !connection.experimental_strict_enabled()
+        {
+            bail_parse_error!(
+                "STRICT tables are an experimental feature. Enable them with --experimental-strict flag"
+            );
+        }
     }
     let opts = ProgramBuilderOpts {
         num_cursors: 1,
@@ -497,14 +508,7 @@ enum PrimaryKeyDefinitionType<'a> {
 
 fn create_table_body_to_str(tbl_name: &ast::QualifiedName, body: &ast::CreateTableBody) -> String {
     let mut sql = String::new();
-    sql.push_str(
-        format!(
-            "CREATE TABLE {} {}",
-            tbl_name.name.as_str(),
-            body.format().unwrap()
-        )
-        .as_str(),
-    );
+    sql.push_str(format!("CREATE TABLE {} {}", tbl_name.name.as_str(), body).as_str());
     match body {
         ast::CreateTableBody::ColumnsAndConstraints {
             columns: _,

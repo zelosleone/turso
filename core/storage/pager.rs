@@ -1,7 +1,6 @@
 use crate::result::LimboResult;
 use crate::storage::wal::IOV_MAX;
 use crate::storage::{
-    btree::BTreePageInner,
     buffer_pool::BufferPool,
     database::DatabaseStorage,
     sqlite3_ondisk::{
@@ -11,7 +10,7 @@ use crate::storage::{
 };
 use crate::types::{IOCompletions, WalState};
 use crate::util::IOExt as _;
-use crate::{io_yield_many, io_yield_one};
+use crate::{io_yield_many, io_yield_one, IOContext};
 use crate::{
     return_if_io, turso_assert, types::WalFrameInfo, Completion, Connection, IOResult, LimboError,
     Result, TransactionState,
@@ -25,7 +24,7 @@ use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use tracing::{instrument, trace, Level};
 
-use super::btree::{btree_init_page, BTreePage};
+use super::btree::btree_init_page;
 use super::page_cache::{CacheError, CacheResizeResult, DumbLruPageCache, PageCacheKey};
 use super::sqlite3_ondisk::begin_write_btree_page;
 use super::wal::CheckpointMode;
@@ -503,7 +502,7 @@ pub struct Pager {
     header_ref_state: RefCell<HeaderRefState>,
     #[cfg(not(feature = "omit_autovacuum"))]
     btree_create_vacuum_full_state: Cell<BtreeCreateVacuumFullState>,
-    pub(crate) encryption_ctx: RefCell<Option<EncryptionContext>>,
+    pub(crate) io_ctx: RefCell<IOContext>,
 }
 
 #[derive(Debug, Clone)]
@@ -544,7 +543,7 @@ enum AllocatePageState {
 #[derive(Clone)]
 enum AllocatePage1State {
     Start,
-    Writing { page: BTreePage },
+    Writing { page: PageRef },
     Done,
 }
 
@@ -607,7 +606,7 @@ impl Pager {
             header_ref_state: RefCell::new(HeaderRefState::Start),
             #[cfg(not(feature = "omit_autovacuum"))]
             btree_create_vacuum_full_state: Cell::new(BtreeCreateVacuumFullState::Start),
-            encryption_ctx: RefCell::new(None),
+            io_ctx: RefCell::new(IOContext::default()),
         })
     }
 
@@ -848,7 +847,7 @@ impl Pager {
         #[cfg(feature = "omit_autovacuum")]
         {
             let page = return_if_io!(self.do_allocate_page(page_type, 0, BtreePageAllocMode::Any));
-            Ok(IOResult::Done(page.get().get().id as u32))
+            Ok(IOResult::Done(page.get().id as u32))
         }
 
         //  If autovacuum is enabled, we need to allocate a new page number that is greater than the largest root page number
@@ -859,7 +858,7 @@ impl Pager {
                 AutoVacuumMode::None => {
                     let page =
                         return_if_io!(self.do_allocate_page(page_type, 0, BtreePageAllocMode::Any));
-                    Ok(IOResult::Done(page.get().get().id as u32))
+                    Ok(IOResult::Done(page.get().id as u32))
                 }
                 AutoVacuumMode::Full => {
                     loop {
@@ -892,7 +891,7 @@ impl Pager {
                                     0,
                                     BtreePageAllocMode::Exact(root_page_num),
                                 ));
-                                let allocated_page_id = page.get().get().id as u32;
+                                let allocated_page_id = page.get().id as u32;
                                 if allocated_page_id != root_page_num {
                                     //  TODO(Zaid): Handle swapping the allocated page with the desired root page
                                 }
@@ -946,16 +945,13 @@ impl Pager {
         page_type: PageType,
         offset: usize,
         _alloc_mode: BtreePageAllocMode,
-    ) -> Result<IOResult<BTreePage>> {
+    ) -> Result<IOResult<PageRef>> {
         let page = return_if_io!(self.allocate_page());
-        let page = Arc::new(BTreePageInner {
-            page: RefCell::new(page),
-        });
         btree_init_page(&page, page_type, offset, self.usable_space());
         tracing::debug!(
             "do_allocate_page(id={}, page_type={:?})",
-            page.get().get().id,
-            page.get().get_contents().page_type()
+            page.get().id,
+            page.get_contents().page_type()
         );
         Ok(IOResult::Done(page))
     }
@@ -1063,8 +1059,10 @@ impl Pager {
             self.rollback(schema_did_change, connection, is_write)?;
             return Ok(IOResult::Done(PagerCommitResult::Rollback));
         }
-        let commit_status =
-            return_if_io!(self.commit_dirty_pages(connection.wal_auto_checkpoint_disabled.get()));
+        let commit_status = return_if_io!(self.commit_dirty_pages(
+            connection.wal_auto_checkpoint_disabled.get(),
+            connection.get_sync_mode()
+        ));
         wal.borrow().end_write_tx();
         wal.borrow().end_read_tx();
 
@@ -1094,7 +1092,7 @@ impl Pager {
     ) -> Result<(PageRef, Completion)> {
         tracing::trace!("read_page_no_cache(page_idx = {})", page_idx);
         let page = Arc::new(Page::new(page_idx));
-
+        let io_ctx = &self.io_ctx.borrow();
         let Some(wal) = self.wal.as_ref() else {
             turso_assert!(
                 matches!(frame_watermark, Some(0) | None),
@@ -1102,12 +1100,7 @@ impl Pager {
             );
 
             page.set_locked();
-            let c = self.begin_read_disk_page(
-                page_idx,
-                page.clone(),
-                allow_empty_read,
-                self.encryption_ctx.borrow().as_ref(),
-            )?;
+            let c = self.begin_read_disk_page(page_idx, page.clone(), allow_empty_read, io_ctx)?;
             return Ok((page, c));
         };
 
@@ -1120,12 +1113,7 @@ impl Pager {
             return Ok((page, c));
         }
 
-        let c = self.begin_read_disk_page(
-            page_idx,
-            page.clone(),
-            allow_empty_read,
-            self.encryption_ctx.borrow().as_ref(),
-        )?;
+        let c = self.begin_read_disk_page(page_idx, page.clone(), allow_empty_read, io_ctx)?;
         Ok((page, c))
     }
 
@@ -1135,7 +1123,7 @@ impl Pager {
         tracing::trace!("read_page(page_idx = {})", page_idx);
         let mut page_cache = self.page_cache.write();
         let page_key = PageCacheKey::new(page_idx);
-        if let Some(page) = page_cache.get(&page_key) {
+        if let Some(page) = page_cache.get(&page_key)? {
             tracing::trace!("read_page(page_idx = {}) = cached", page_idx);
             return Ok((page.clone(), None));
         }
@@ -1149,7 +1137,7 @@ impl Pager {
         page_idx: usize,
         page: PageRef,
         allow_empty_read: bool,
-        encryption_key: Option<&EncryptionContext>,
+        io_ctx: &IOContext,
     ) -> Result<Completion> {
         sqlite3_ondisk::begin_read_page(
             self.db_file.clone(),
@@ -1157,7 +1145,7 @@ impl Pager {
             page,
             page_idx,
             allow_empty_read,
-            encryption_key,
+            io_ctx,
         )
     }
 
@@ -1170,25 +1158,20 @@ impl Pager {
         let page_key = PageCacheKey::new(page_idx);
         match page_cache.insert(page_key, page.clone()) {
             Ok(_) => {}
-            Err(CacheError::Full) => return Err(LimboError::CacheFull),
             Err(CacheError::KeyExists) => {
                 unreachable!("Page should not exist in cache after get() miss")
             }
-            Err(e) => {
-                return Err(LimboError::InternalError(format!(
-                    "Failed to insert page into cache: {e:?}"
-                )))
-            }
+            Err(e) => return Err(e.into()),
         }
         Ok(())
     }
 
     // Get a page from the cache, if it exists.
-    pub fn cache_get(&self, page_idx: usize) -> Option<PageRef> {
+    pub fn cache_get(&self, page_idx: usize) -> Result<Option<PageRef>> {
         tracing::trace!("read_page(page_idx = {})", page_idx);
         let mut page_cache = self.page_cache.write();
         let page_key = PageCacheKey::new(page_idx);
-        page_cache.get(&page_key)
+        Ok(page_cache.get(&page_key)?)
     }
 
     /// Get a page from cache only if it matches the target frame
@@ -1197,10 +1180,10 @@ impl Pager {
         page_idx: usize,
         target_frame: u64,
         seq: u32,
-    ) -> Option<PageRef> {
+    ) -> Result<Option<PageRef>> {
         let mut page_cache = self.page_cache.write();
         let page_key = PageCacheKey::new(page_idx);
-        page_cache.get(&page_key).and_then(|page| {
+        let page = page_cache.get(&page_key)?.and_then(|page| {
             if page.is_valid_for_checkpoint(target_frame, seq) {
                 tracing::trace!(
                     "cache_get_for_checkpoint: page {} frame {} is valid",
@@ -1219,7 +1202,8 @@ impl Pager {
                 );
                 None
             }
-        })
+        });
+        Ok(page)
     }
 
     /// Changes the size of the page cache.
@@ -1273,8 +1257,8 @@ impl Pager {
             let page = {
                 let mut cache = self.page_cache.write();
                 let page_key = PageCacheKey::new(*page_id);
-                let page = cache.get(&page_key).expect("we somehow added a page to dirty list but we didn't mark it as dirty, causing cache to drop it.");
-                let page_type = page.get().contents.as_ref().unwrap().maybe_page_type();
+                let page = cache.get(&page_key)?.expect("we somehow added a page to dirty list but we didn't mark it as dirty, causing cache to drop it.");
+                let page_type = page.get_contents().maybe_page_type();
                 trace!("cacheflush(page={}, page_type={:?}", page_id, page_type);
                 page
             };
@@ -1320,6 +1304,7 @@ impl Pager {
     pub fn commit_dirty_pages(
         &self,
         wal_auto_checkpoint_disabled: bool,
+        sync_mode: crate::SyncMode,
     ) -> Result<IOResult<PagerCommitResult>> {
         let Some(wal) = self.wal.as_ref() else {
             return Err(LimboError::InternalError(
@@ -1355,13 +1340,13 @@ impl Pager {
                         let page = {
                             let mut cache = self.page_cache.write();
                             let page_key = PageCacheKey::new(page_id);
-                            let page = cache.get(&page_key).expect(
+                            let page = cache.get(&page_key)?.expect(
                                 "dirty list contained a page that cache dropped (page={page_id})",
                             );
                             trace!(
                                 "commit_dirty_pages(page={}, page_type={:?})",
                                 page_id,
-                                page.get().contents.as_ref().unwrap().maybe_page_type()
+                                page.get_contents().maybe_page_type()
                             );
                             page
                         };
@@ -1396,7 +1381,12 @@ impl Pager {
                     if completions.is_empty() {
                         return Ok(IOResult::Done(PagerCommitResult::WalWritten));
                     } else {
-                        self.commit_info.state.set(CommitState::SyncWal);
+                        // Skip sync if synchronous mode is OFF
+                        if sync_mode == crate::SyncMode::Off {
+                            self.commit_info.state.set(CommitState::AfterSyncWal);
+                        } else {
+                            self.commit_info.state.set(CommitState::SyncWal);
+                        }
                     }
                     if !completions.iter().all(|c| c.is_completed()) {
                         io_yield_many!(completions);
@@ -1419,7 +1409,12 @@ impl Pager {
                 }
                 CommitState::Checkpoint => {
                     checkpoint_result = return_if_io!(self.checkpoint());
-                    self.commit_info.state.set(CommitState::SyncDbFile);
+                    // Skip sync if synchronous mode is OFF
+                    if sync_mode == crate::SyncMode::Off {
+                        self.commit_info.state.set(CommitState::AfterSyncDbFile);
+                    } else {
+                        self.commit_info.state.set(CommitState::SyncDbFile);
+                    }
                 }
                 CommitState::SyncDbFile => {
                     let c = sqlite3_ondisk::begin_sync(self.db_file.clone(), self.syncing.clone())?;
@@ -1435,11 +1430,11 @@ impl Pager {
                 }
             }
         };
-
-        let now = self.io.now();
         tracing::debug!(
             "total time flushing cache: {} ms",
-            now.to_system_time()
+            self.io
+                .now()
+                .to_system_time()
                 .duration_since(self.commit_info.time.get().to_system_time())
                 .unwrap()
                 .as_millis()
@@ -1483,7 +1478,7 @@ impl Pager {
                 header.db_size as u64,
                 raw_page,
             )?;
-            if let Some(page) = self.cache_get(header.page_number as usize) {
+            if let Some(page) = self.cache_get(header.page_number as usize)? {
                 let content = page.get_contents();
                 content.as_ptr().copy_from_slice(raw_page);
                 turso_assert!(
@@ -1506,7 +1501,7 @@ impl Pager {
             for page_id in self.dirty_pages.borrow().iter() {
                 let page_key = PageCacheKey::new(*page_id);
                 let mut cache = self.page_cache.write();
-                let page = cache.get(&page_key).expect("we somehow added a page to dirty list but we didn't mark it as dirty, causing cache to drop it.");
+                let page = cache.get(&page_key)?.expect("we somehow added a page to dirty list but we didn't mark it as dirty, causing cache to drop it.");
                 page.clear_dirty();
             }
             self.dirty_pages.borrow_mut().clear();
@@ -1737,7 +1732,7 @@ impl Pager {
                     let trunk_page = trunk_page.as_ref().unwrap();
                     turso_assert!(trunk_page.is_loaded(), "trunk_page should be loaded");
 
-                    let trunk_page_contents = trunk_page.get().contents.as_ref().unwrap();
+                    let trunk_page_contents = trunk_page.get_contents();
                     let number_of_leaf_pages =
                         trunk_page_contents.read_u32_no_offset(TRUNK_PAGE_LEAF_COUNT_OFFSET);
 
@@ -1802,7 +1797,8 @@ impl Pager {
                 default_header.database_size = 1.into();
 
                 // if a key is set, then we will reserve space for encryption metadata
-                if let Some(ref ctx) = *self.encryption_ctx.borrow() {
+                let io_ctx = self.io_ctx.borrow();
+                if let Some(ctx) = io_ctx.encryption_context() {
                     default_header.reserved_space = ctx.required_reserved_bytes()
                 }
 
@@ -1816,9 +1812,7 @@ impl Pager {
                 let contents = page.get_contents();
                 contents.write_database_header(&default_header);
 
-                let page1 = Arc::new(BTreePageInner {
-                    page: RefCell::new(page),
-                });
+                let page1 = page;
                 // Create the sqlite_schema table, for this we just need to create the btree page
                 // for the first page of the database which is basically like any other btree page
                 // but with a 100 byte offset, so we just init the page so that sqlite understands
@@ -1830,24 +1824,23 @@ impl Pager {
                     (default_header.page_size.get() - default_header.reserved_space as u32)
                         as usize,
                 );
-                let c = begin_write_btree_page(self, &page1.get())?;
+                let c = begin_write_btree_page(self, &page1)?;
 
                 self.allocate_page1_state
                     .replace(AllocatePage1State::Writing { page: page1 });
                 io_yield_one!(c);
             }
             AllocatePage1State::Writing { page } => {
-                let page1_ref = page.get();
-                turso_assert!(page1_ref.is_loaded(), "page should be loaded");
+                turso_assert!(page.is_loaded(), "page should be loaded");
                 tracing::trace!("allocate_page1(Writing done)");
-                let page_key = PageCacheKey::new(page1_ref.get().id);
+                let page_key = PageCacheKey::new(page.get().id);
                 let mut cache = self.page_cache.write();
-                cache.insert(page_key, page1_ref.clone()).map_err(|e| {
+                cache.insert(page_key, page.clone()).map_err(|e| {
                     LimboError::InternalError(format!("Failed to insert page 1 into cache: {e:?}"))
                 })?;
                 self.db_state.set(DbState::Initialized);
                 self.allocate_page1_state.replace(AllocatePage1State::Done);
-                Ok(IOResult::Done(page1_ref.clone()))
+                Ok(IOResult::Done(page.clone()))
             }
             AllocatePage1State::Done => unreachable!("cannot try to allocate page 1 again"),
         }
@@ -1905,15 +1898,7 @@ impl Pager {
                             self.add_dirty(&page);
                             let page_key = PageCacheKey::new(page.get().id);
                             let mut cache = self.page_cache.write();
-                            match cache.insert(page_key, page.clone()) {
-                                Ok(_) => (),
-                                Err(CacheError::Full) => return Err(LimboError::CacheFull),
-                                Err(_) => {
-                                    return Err(LimboError::InternalError(
-                                        "Unknown error inserting page to cache".into(),
-                                    ))
-                                }
-                            }
+                            cache.insert(page_key, page.clone())?;
                         }
                     }
 
@@ -1942,7 +1927,7 @@ impl Pager {
                         "Freelist trunk page {} is not loaded",
                         trunk_page.get().id
                     );
-                    let page_contents = trunk_page.get().contents.as_ref().unwrap();
+                    let page_contents = trunk_page.get_contents();
                     let next_trunk_page_id =
                         page_contents.read_u32_no_offset(FREELIST_TRUNK_OFFSET_NEXT_TRUNK);
                     let number_of_freelist_leaves =
@@ -1951,7 +1936,7 @@ impl Pager {
                     // There are leaf pointers on this trunk page, so we can reuse one of the pages
                     // for the allocation.
                     if number_of_freelist_leaves != 0 {
-                        let page_contents = trunk_page.get().contents.as_ref().unwrap();
+                        let page_contents = trunk_page.get_contents();
                         let next_leaf_page_id =
                             page_contents.read_u32_no_offset(FREELIST_TRUNK_OFFSET_FIRST_LEAF);
                         let (leaf_page, c) = self.read_page(next_leaf_page_id as usize)?;
@@ -1993,7 +1978,7 @@ impl Pager {
                         "Freelist leaf page {} has overflow cells",
                         trunk_page.get().id
                     );
-                    trunk_page.get().contents.as_ref().unwrap().as_ptr().fill(0);
+                    trunk_page.get_contents().as_ptr().fill(0);
                     let page_key = PageCacheKey::new(trunk_page.get().id);
                     {
                         let mut page_cache = self.page_cache.write();
@@ -2017,7 +2002,7 @@ impl Pager {
                         "Leaf page {} is not loaded",
                         leaf_page.get().id
                     );
-                    let page_contents = trunk_page.get().contents.as_ref().unwrap();
+                    let page_contents = trunk_page.get_contents();
                     self.add_dirty(leaf_page);
                     // zero out the page
                     turso_assert!(
@@ -2025,7 +2010,7 @@ impl Pager {
                         "Freelist leaf page {} has overflow cells",
                         leaf_page.get().id
                     );
-                    leaf_page.get().contents.as_ref().unwrap().as_ptr().fill(0);
+                    leaf_page.get_contents().as_ptr().fill(0);
                     let page_key = PageCacheKey::new(leaf_page.get().id);
                     {
                         let mut page_cache = self.page_cache.write();
@@ -2084,15 +2069,7 @@ impl Pager {
                         {
                             // Run in separate block to avoid deadlock on page cache write lock
                             let mut cache = self.page_cache.write();
-                            match cache.insert(page_key, page.clone()) {
-                                Err(CacheError::Full) => return Err(LimboError::CacheFull),
-                                Err(_) => {
-                                    return Err(LimboError::InternalError(
-                                        "Unknown error inserting page to cache".into(),
-                                    ))
-                                }
-                                Ok(_) => {}
-                            };
+                            cache.insert(page_key, page.clone())?;
                         }
                         header.database_size = new_db_size.into();
                         *state = AllocatePageState::Start;
@@ -2189,10 +2166,15 @@ impl Pager {
     }
 
     pub fn set_encryption_context(&self, cipher_mode: CipherMode, key: &EncryptionKey) {
-        let encryption_ctx = EncryptionContext::new(cipher_mode, key).unwrap();
-        self.encryption_ctx.replace(Some(encryption_ctx.clone()));
+        let page_size = self.page_size.get().unwrap().get() as usize;
+        let encryption_ctx = EncryptionContext::new(cipher_mode, key, page_size).unwrap();
+        {
+            let mut io_ctx = self.io_ctx.borrow_mut();
+            io_ctx.set_encryption(encryption_ctx);
+        }
         let Some(wal) = self.wal.as_ref() else { return };
-        wal.borrow_mut().set_encryption_context(encryption_ctx)
+        wal.borrow_mut()
+            .set_io_context(self.io_ctx.borrow().clone())
     }
 }
 
@@ -2427,13 +2409,16 @@ mod tests {
             std::thread::spawn(move || {
                 let mut cache = cache.write();
                 let page_key = PageCacheKey::new(1);
-                cache.insert(page_key, Arc::new(Page::new(1))).unwrap();
+                let page = Page::new(1);
+                // Set loaded so that we avoid eviction, as we evict the page from cache if it is not locked and not loaded
+                page.set_loaded();
+                cache.insert(page_key, Arc::new(page)).unwrap();
             })
         };
         let _ = thread.join();
         let mut cache = cache.write();
         let page_key = PageCacheKey::new(1);
-        let page = cache.get(&page_key);
+        let page = cache.get(&page_key).unwrap();
         assert_eq!(page.unwrap().get().id, 1);
     }
 }

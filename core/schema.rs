@@ -20,7 +20,9 @@ use crate::result::LimboResult;
 use crate::storage::btree::BTreeCursor;
 use crate::translate::collate::CollationSeq;
 use crate::translate::plan::SelectPlan;
-use crate::util::{module_args_from_sql, module_name_from_sql, IOExt, UnparsedFromSqlIndex};
+use crate::util::{
+    module_args_from_sql, module_name_from_sql, type_from_name, IOExt, UnparsedFromSqlIndex,
+};
 use crate::{return_if_io, LimboError, MvCursor, Pager, RefValue, SymbolTable, VirtualTable};
 use crate::{util::normalize_ident, Result};
 use core::fmt;
@@ -155,6 +157,15 @@ impl Schema {
             .get(&table_name)
             .cloned()
             .unwrap_or_default()
+    }
+
+    /// Get all materialized views that depend on a given table, skip normalizing ident.
+    /// We are basically assuming we already normalized the ident.
+    pub fn get_dependent_materialized_views_unnormalized(
+        &self,
+        table_name: &str,
+    ) -> Option<&Vec<String>> {
+        self.table_to_materialized_views.get(table_name)
     }
 
     /// Populate all materialized views by scanning their source tables
@@ -895,37 +906,10 @@ fn create_table(
 
                 let mut typename_exactly_integer = false;
                 let ty = match col_type {
-                    Some(data_type) => 'ty: {
-                        // https://www.sqlite.org/datatype3.html
-                        let mut type_name = data_type.name.clone();
-                        type_name.make_ascii_uppercase();
-
-                        if type_name.is_empty() {
-                            break 'ty Type::Blob;
-                        }
-
-                        if type_name == "INTEGER" {
-                            typename_exactly_integer = true;
-                            break 'ty Type::Integer;
-                        }
-
-                        if let Some(ty) = type_name.as_bytes().windows(3).find_map(|s| match s {
-                            b"INT" => Some(Type::Integer),
-                            _ => None,
-                        }) {
-                            break 'ty ty;
-                        }
-
-                        if let Some(ty) = type_name.as_bytes().windows(4).find_map(|s| match s {
-                            b"CHAR" | b"CLOB" | b"TEXT" => Some(Type::Text),
-                            b"BLOB" => Some(Type::Blob),
-                            b"REAL" | b"FLOA" | b"DOUB" => Some(Type::Real),
-                            _ => None,
-                        }) {
-                            break 'ty ty;
-                        }
-
-                        Type::Numeric
+                    Some(data_type) => {
+                        let (ty, ei) = type_from_name(&data_type.name);
+                        typename_exactly_integer = ei;
+                        ty
                     }
                     None => Type::Null,
                 };
@@ -1063,8 +1047,8 @@ impl Column {
 }
 
 // TODO: This might replace some of util::columns_from_create_table_body
-impl From<ColumnDefinition> for Column {
-    fn from(value: ColumnDefinition) -> Self {
+impl From<&ColumnDefinition> for Column {
+    fn from(value: &ColumnDefinition) -> Self {
         let name = value.col_name.as_str();
 
         let mut default = None;
@@ -1073,13 +1057,13 @@ impl From<ColumnDefinition> for Column {
         let mut unique = false;
         let mut collation = None;
 
-        for ast::NamedColumnConstraint { constraint, .. } in value.constraints {
+        for ast::NamedColumnConstraint { constraint, .. } in &value.constraints {
             match constraint {
                 ast::ColumnConstraint::PrimaryKey { .. } => primary_key = true,
                 ast::ColumnConstraint::NotNull { .. } => notnull = true,
                 ast::ColumnConstraint::Unique(..) => unique = true,
                 ast::ColumnConstraint::Default(expr) => {
-                    default.replace(expr);
+                    default.replace(expr.clone());
                 }
                 ast::ColumnConstraint::Collate { collation_name } => {
                     collation.replace(
@@ -1092,38 +1076,20 @@ impl From<ColumnDefinition> for Column {
         }
 
         let ty = match value.col_type {
-            Some(ref data_type) => {
-                // https://www.sqlite.org/datatype3.html
-                let type_name = data_type.name.clone().to_uppercase();
-
-                if type_name.contains("INT") {
-                    Type::Integer
-                } else if type_name.contains("CHAR")
-                    || type_name.contains("CLOB")
-                    || type_name.contains("TEXT")
-                {
-                    Type::Text
-                } else if type_name.contains("BLOB") || type_name.is_empty() {
-                    Type::Blob
-                } else if type_name.contains("REAL")
-                    || type_name.contains("FLOA")
-                    || type_name.contains("DOUB")
-                {
-                    Type::Real
-                } else {
-                    Type::Numeric
-                }
-            }
+            Some(ref data_type) => type_from_name(&data_type.name).0,
             None => Type::Null,
         };
 
         let ty_str = value
             .col_type
+            .as_ref()
             .map(|t| t.name.to_string())
             .unwrap_or_default();
 
+        let hidden = ty_str.contains("HIDDEN");
+
         Column {
-            name: Some(name.to_string()),
+            name: Some(normalize_ident(name)),
             ty,
             default,
             notnull,
@@ -1132,7 +1098,7 @@ impl From<ColumnDefinition> for Column {
             is_rowid_alias: primary_key && matches!(ty, Type::Integer),
             unique,
             collation,
-            hidden: false,
+            hidden,
         }
     }
 }

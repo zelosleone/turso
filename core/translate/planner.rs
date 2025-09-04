@@ -10,6 +10,7 @@ use super::{
     select::prepare_select_plan,
     SymbolTable,
 };
+use crate::function::{AggFunc, ExtFunc};
 use crate::translate::expr::WalkControl;
 use crate::{
     ast::Limit,
@@ -20,6 +21,7 @@ use crate::{
     vdbe::{builder::TableRefIdCounter, BranchOffset},
     Result,
 };
+use turso_macros::match_ignore_ascii_case;
 use turso_parser::ast::Literal::Null;
 use turso_parser::ast::{
     self, As, Expr, FromClause, JoinType, Literal, Materialized, QualifiedName, TableInternalId,
@@ -30,18 +32,12 @@ pub const ROWID: &str = "rowid";
 
 pub fn resolve_aggregates(
     schema: &Schema,
+    syms: &SymbolTable,
     top_level_expr: &Expr,
     aggs: &mut Vec<Aggregate>,
 ) -> Result<bool> {
     let mut contains_aggregates = false;
     walk_expr(top_level_expr, &mut |expr: &Expr| -> Result<WalkControl> {
-        if aggs
-            .iter()
-            .any(|a| exprs_are_equivalent(&a.original_expr, expr))
-        {
-            contains_aggregates = true;
-            return Ok(WalkControl::Continue);
-        }
         match expr {
             Expr::FunctionCall {
                 name,
@@ -61,32 +57,42 @@ pub fn resolve_aggregates(
                     );
                 }
                 let args_count = args.len();
+                let distinctness = Distinctness::from_ast(distinctness.as_ref());
+
+                if !schema.indexes_enabled() && distinctness.is_distinct() {
+                    crate::bail_parse_error!(
+                        "SELECT with DISTINCT is not allowed without indexes enabled"
+                    );
+                }
+                if distinctness.is_distinct() && args_count != 1 {
+                    crate::bail_parse_error!(
+                        "DISTINCT aggregate functions must have exactly one argument"
+                    );
+                }
                 match Func::resolve_function(name.as_str(), args_count) {
                     Ok(Func::Agg(f)) => {
-                        let distinctness = Distinctness::from_ast(distinctness.as_ref());
-                        if !schema.indexes_enabled() && distinctness.is_distinct() {
-                            crate::bail_parse_error!(
-                                "SELECT with DISTINCT is not allowed without indexes enabled"
-                            );
-                        }
-                        if distinctness.is_distinct() && args.len() != 1 {
-                            crate::bail_parse_error!(
-                                "DISTINCT aggregate functions must have exactly one argument"
-                            );
-                        }
-                        aggs.push(Aggregate {
-                            func: f,
-                            args: args.iter().map(|arg| *arg.clone()).collect(),
-                            original_expr: expr.clone(),
-                            distinctness,
-                        });
+                        add_aggregate_if_not_exists(aggs, expr, args, distinctness, f);
                         contains_aggregates = true;
+                        return Ok(WalkControl::SkipChildren);
                     }
-                    _ => {
-                        for arg in args.iter() {
-                            contains_aggregates |= resolve_aggregates(schema, arg, aggs)?;
+                    Err(e) => {
+                        if let Some(f) = syms.resolve_function(name.as_str(), args_count) {
+                            if let ExtFunc::Aggregate { .. } = f.as_ref().func {
+                                add_aggregate_if_not_exists(
+                                    aggs,
+                                    expr,
+                                    args,
+                                    distinctness,
+                                    AggFunc::External(f.func.clone().into()),
+                                );
+                                contains_aggregates = true;
+                                return Ok(WalkControl::SkipChildren);
+                            }
+                        } else {
+                            return Err(e);
                         }
                     }
+                    _ => {}
                 }
             }
             Expr::FunctionCallStar { name, filter_over } => {
@@ -95,14 +101,26 @@ pub fn resolve_aggregates(
                         "FILTER clause is not supported yet in aggregate functions"
                     );
                 }
-                if let Ok(Func::Agg(f)) = Func::resolve_function(name.as_str(), 0) {
-                    aggs.push(Aggregate {
-                        func: f,
-                        args: vec![],
-                        original_expr: expr.clone(),
-                        distinctness: Distinctness::NonDistinct,
-                    });
-                    contains_aggregates = true;
+                match Func::resolve_function(name.as_str(), 0) {
+                    Ok(Func::Agg(f)) => {
+                        add_aggregate_if_not_exists(aggs, expr, &[], Distinctness::NonDistinct, f);
+                        contains_aggregates = true;
+                        return Ok(WalkControl::SkipChildren);
+                    }
+                    Ok(_) => {
+                        crate::bail_parse_error!("Invalid aggregate function: {}", name.as_str());
+                    }
+                    Err(e) => match e {
+                        crate::LimboError::ParseError(e) => {
+                            crate::bail_parse_error!("{}", e);
+                        }
+                        _ => {
+                            crate::bail_parse_error!(
+                                "Invalid aggregate function: {}",
+                                name.as_str()
+                            );
+                        }
+                    },
                 }
             }
             _ => {}
@@ -112,6 +130,21 @@ pub fn resolve_aggregates(
     })?;
 
     Ok(contains_aggregates)
+}
+
+fn add_aggregate_if_not_exists(
+    aggs: &mut Vec<Aggregate>,
+    expr: &Expr,
+    args: &[Box<Expr>],
+    distinctness: Distinctness,
+    func: AggFunc,
+) {
+    if aggs
+        .iter()
+        .all(|a| !exprs_are_equivalent(&a.original_expr, expr))
+    {
+        aggs.push(Aggregate::new(func, args, expr, distinctness));
+    }
 }
 
 pub fn bind_column_references(
@@ -125,11 +158,13 @@ pub fn bind_column_references(
             Expr::Id(id) => {
                 // true and false are special constants that are effectively aliases for 1 and 0
                 // and not identifiers of columns
-                if id.as_str().eq_ignore_ascii_case("true")
-                    || id.as_str().eq_ignore_ascii_case("false")
-                {
-                    return Ok(());
-                }
+                let id_bytes = id.as_str().as_bytes();
+                match_ignore_ascii_case!(match id_bytes {
+                    b"true" | b"false" => {
+                        return Ok(());
+                    }
+                    _ => {}
+                });
                 let normalized_id = normalize_ident(id.as_str());
 
                 if !referenced_tables.joined_tables().is_empty() {
@@ -374,9 +409,10 @@ fn parse_from_clause_table(
             let cur_table_index = table_references.joined_tables().len();
             let identifier = maybe_alias
                 .map(|a| match a {
-                    ast::As::As(id) => id.as_str().to_string(),
-                    ast::As::Elided(id) => id.as_str().to_string(),
+                    ast::As::As(id) => id,
+                    ast::As::Elided(id) => id,
                 })
+                .map(|id| normalize_ident(id.as_str()))
                 .unwrap_or(format!("subquery_{cur_table_index}"));
             table_references.add_joined_table(JoinedTable::new_subquery(
                 identifier,
@@ -417,7 +453,7 @@ fn parse_table(
 ) -> Result<()> {
     let normalized_qualified_name = normalize_ident(qualified_name.name.as_str());
     let database_id = connection.resolve_database_id(qualified_name)?;
-    let table_name = qualified_name.name.clone();
+    let table_name = &qualified_name.name;
 
     // Check if the FROM clause table is referring to a CTE in the current scope.
     if let Some(cte_idx) = ctes
@@ -439,7 +475,7 @@ fn parse_table(
                 ast::As::As(id) => id,
                 ast::As::Elided(id) => id,
             })
-            .map(|a| a.as_str().to_string());
+            .map(|a| normalize_ident(a.as_str()));
         let internal_id = table_ref_counter.next();
         let tbl_ref = if let Table::Virtual(tbl) = table.as_ref() {
             transform_args_into_where_terms(args, internal_id, vtab_predicates, table.as_ref())?;
@@ -495,14 +531,17 @@ fn parse_table(
     if let Some(view) = view {
         // Create a virtual table wrapper for the view
         // We'll use the view's columns from the schema
-        let vtab = crate::vtab_view::create_view_virtual_table(table_name.as_str(), view.clone())?;
+        let vtab = crate::vtab_view::create_view_virtual_table(
+            normalize_ident(table_name.as_str()).as_str(),
+            view.clone(),
+        )?;
 
         let alias = maybe_alias
             .map(|a| match a {
                 ast::As::As(id) => id,
                 ast::As::Elided(id) => id,
             })
-            .map(|a| a.as_str().to_string());
+            .map(|a| normalize_ident(a.as_str()));
 
         table_references.add_joined_table(JoinedTable {
             op: Operation::Scan(Scan::VirtualTable {
