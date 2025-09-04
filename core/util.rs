@@ -2379,7 +2379,7 @@ pub mod tests {
 
         for (input, expected) in tc {
             let result = type_from_name(input);
-            assert_eq!(result, expected, "Failed for input: {}", input);
+            assert_eq!(result, expected, "Failed for input: {input}");
         }
     }
 }
