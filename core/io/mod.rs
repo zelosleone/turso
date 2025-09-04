@@ -226,27 +226,31 @@ impl Completion {
     }
 
     pub fn complete(&self, result: i32) {
-        if self.inner.result.set(None).is_ok() {
-            let result = Ok(result);
-            match &self.inner.completion_type {
-                CompletionType::Read(r) => r.callback(result),
-                CompletionType::Write(w) => w.callback(result),
-                CompletionType::Sync(s) => s.callback(result), // fix
-                CompletionType::Truncate(t) => t.callback(result),
-            };
-        }
+        let result = Ok(result);
+        match &self.inner.completion_type {
+            CompletionType::Read(r) => r.callback(result),
+            CompletionType::Write(w) => w.callback(result),
+            CompletionType::Sync(s) => s.callback(result), // fix
+            CompletionType::Truncate(t) => t.callback(result),
+        };
+        self.inner
+            .result
+            .set(None)
+            .expect("result must be set only once");
     }
 
     pub fn error(&self, err: CompletionError) {
-        if self.inner.result.set(Some(err)).is_ok() {
-            let result = Err(err);
-            match &self.inner.completion_type {
-                CompletionType::Read(r) => r.callback(result),
-                CompletionType::Write(w) => w.callback(result),
-                CompletionType::Sync(s) => s.callback(result), // fix
-                CompletionType::Truncate(t) => t.callback(result),
-            };
-        }
+        let result = Err(err);
+        match &self.inner.completion_type {
+            CompletionType::Read(r) => r.callback(result),
+            CompletionType::Write(w) => w.callback(result),
+            CompletionType::Sync(s) => s.callback(result), // fix
+            CompletionType::Truncate(t) => t.callback(result),
+        };
+        self.inner
+            .result
+            .set(Some(err))
+            .expect("result must be set only once");
     }
 
     pub fn abort(&self) {
