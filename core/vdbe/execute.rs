@@ -2164,7 +2164,7 @@ pub fn op_auto_commit(
         insn
     );
     let conn = program.connection.clone();
-    if state.commit_state == CommitState::Committing {
+    if matches!(state.commit_state, CommitState::Committing) {
         return program
             .commit_txn(pager.clone(), state, mv_store, *rollback)
             .map(Into::into);

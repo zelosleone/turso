@@ -28,15 +28,18 @@ pub mod sorter;
 use crate::{
     error::LimboError,
     function::{AggFunc, FuncCtx},
-    state_machine::StateTransition,
+    mvcc::{database::CommitStateMachine, LocalClock},
+    state_machine::{StateMachine, StateTransition, TransitionResult},
     storage::sqlite3_ondisk::SmallVec,
     translate::{collate::CollationSeq, plan::TableReferences},
     types::{IOCompletions, IOResult, RawSlice, TextRef},
-    vdbe::execute::{
-        OpColumnState, OpDeleteState, OpDeleteSubState, OpIdxInsertState, OpInsertState,
-        OpInsertSubState, OpNewRowidState, OpNoConflictState, OpRowIdState, OpSeekState,
+    vdbe::{
+        execute::{
+            OpColumnState, OpDeleteState, OpDeleteSubState, OpIdxInsertState, OpInsertState,
+            OpInsertSubState, OpNewRowidState, OpNoConflictState, OpRowIdState, OpSeekState,
+        },
+        metrics::StatementMetrics,
     },
-    vdbe::metrics::StatementMetrics,
     IOExt, RefValue,
 };
 
@@ -210,7 +213,8 @@ impl<const N: usize> Bitfield<N> {
     }
 }
 
-#[derive(Debug, Copy, Clone, PartialEq, Eq)]
+#[derive(Debug)]
+#[allow(clippy::large_enum_variant)]
 /// The commit state of the program.
 /// There are two states:
 /// - Ready: The program is ready to run the next instruction, or has shut down after
@@ -220,6 +224,9 @@ impl<const N: usize> Bitfield<N> {
 enum CommitState {
     Ready,
     Committing,
+    CommitingMvcc {
+        state_machine: StateMachine<CommitStateMachine<LocalClock>>,
+    },
 }
 
 #[derive(Debug, Clone)]
@@ -550,25 +557,35 @@ impl Program {
             if auto_commit {
                 // FIXME: we don't want to commit stuff from other programs.
                 let mut mv_transactions = conn.mv_transactions.borrow_mut();
-                for tx_id in mv_transactions.iter() {
-                    let mut state_machine =
-                        mv_store.commit_tx(*tx_id, pager.clone(), &conn).unwrap();
-                    // TODO: sync IO hack
-                    loop {
-                        let res = state_machine.step(mv_store)?;
-                        match res {
-                            crate::state_machine::TransitionResult::Io(io) => {
-                                io.wait(conn._db.io.as_ref())?;
-                            }
-                            crate::state_machine::TransitionResult::Continue => continue,
-                            crate::state_machine::TransitionResult::Done(_) => break,
-                        }
+                if matches!(program_state.commit_state, CommitState::Ready) {
+                    assert!(
+                        mv_transactions.len() <= 1,
+                        "for now we only support one mv transaction in single connection, {mv_transactions:?}",
+                    );
+                    if mv_transactions.is_empty() {
+                        return Ok(IOResult::Done(()));
                     }
-                    assert!(state_machine.is_finalized());
+                    let tx_id = mv_transactions.first().unwrap();
+                    let state_machine = mv_store.commit_tx(*tx_id, pager.clone(), &conn).unwrap();
+                    program_state.commit_state = CommitState::CommitingMvcc { state_machine };
                 }
-                conn.mv_tx_id.set(None);
-                conn.transaction_state.replace(TransactionState::None);
-                mv_transactions.clear();
+                let CommitState::CommitingMvcc { state_machine } = &mut program_state.commit_state
+                else {
+                    panic!("invalid state for mvcc commit step")
+                };
+                match self.step_end_mvcc_txn(state_machine, mv_store)? {
+                    IOResult::Done(_) => {
+                        assert!(state_machine.is_finalized());
+                        conn.mv_tx_id.set(None);
+                        conn.transaction_state.replace(TransactionState::None);
+                        program_state.commit_state = CommitState::Ready;
+                        mv_transactions.clear();
+                        return Ok(IOResult::Done(()));
+                    }
+                    IOResult::IO(io) => {
+                        return Ok(IOResult::IO(io));
+                    }
+                }
             }
             Ok(IOResult::Done(()))
         } else {
@@ -579,7 +596,7 @@ impl Program {
                 auto_commit,
                 program_state.commit_state
             );
-            if program_state.commit_state == CommitState::Committing {
+            if matches!(program_state.commit_state, CommitState::Committing) {
                 let TransactionState::Write { .. } = connection.transaction_state.get() else {
                     unreachable!("invalid state for write commit step")
                 };
@@ -642,6 +659,25 @@ impl Program {
             }
         }
         Ok(IOResult::Done(()))
+    }
+
+    #[instrument(skip(self, commit_state, mv_store), level = Level::DEBUG)]
+    fn step_end_mvcc_txn(
+        &self,
+        commit_state: &mut StateMachine<CommitStateMachine<LocalClock>>,
+        mv_store: &Arc<MvStore>,
+    ) -> Result<IOResult<()>> {
+        loop {
+            match commit_state.step(mv_store)? {
+                TransitionResult::Continue => {}
+                TransitionResult::Io(iocompletions) => {
+                    return Ok(IOResult::IO(iocompletions));
+                }
+                TransitionResult::Done(_) => {
+                    return Ok(IOResult::Done(()));
+                }
+            }
+        }
     }
 
     #[rustfmt::skip]
