@@ -204,7 +204,7 @@ impl ArbitrarySchema {
                     .collect::<Vec<_>>()
                     .join(",");
 
-                format!("CREATE TABLE {} ({});", table.name, columns)
+                format!("CREATE TABLE IF NOT EXISTS {} ({});", table.name, columns)
             })
             .collect()
     }
