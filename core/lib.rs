@@ -2038,16 +2038,16 @@ impl Connection {
         self.syms.borrow().vtab_modules.keys().cloned().collect()
     }
 
-    pub fn set_encryption_key(&self, key: EncryptionKey) {
+    pub fn set_encryption_key(&self, key: EncryptionKey) -> Result<()> {
         tracing::trace!("setting encryption key for connection");
         *self.encryption_key.borrow_mut() = Some(key.clone());
-        self.set_encryption_context();
+        self.set_encryption_context()
     }
 
-    pub fn set_encryption_cipher(&self, cipher_mode: CipherMode) {
+    pub fn set_encryption_cipher(&self, cipher_mode: CipherMode) -> Result<()> {
         tracing::trace!("setting encryption cipher for connection");
         self.encryption_cipher_mode.replace(Some(cipher_mode));
-        self.set_encryption_context();
+        self.set_encryption_context()
     }
 
     pub fn get_encryption_cipher_mode(&self) -> Option<CipherMode> {
@@ -2055,17 +2055,17 @@ impl Connection {
     }
 
     // if both key and cipher are set, set encryption context on pager
-    fn set_encryption_context(&self) {
+    fn set_encryption_context(&self) -> Result<()> {
         let key_ref = self.encryption_key.borrow();
         let Some(key) = key_ref.as_ref() else {
-            return;
+            return Ok(());
         };
         let Some(cipher_mode) = self.encryption_cipher_mode.get() else {
-            return;
+            return Ok(());
         };
         tracing::trace!("setting encryption ctx for connection");
         let pager = self.pager.borrow();
-        pager.set_encryption_context(cipher_mode, key);
+        pager.set_encryption_context(cipher_mode, key)
     }
 }
 
