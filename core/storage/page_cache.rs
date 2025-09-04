@@ -237,55 +237,47 @@ impl PageCache {
         trace!("insert(key={:?})", key);
         let slot = { self.map.get(&key) };
         if let Some(slot) = slot {
-            let stale = {
-                let e = &self.entries[slot];
-                let p = e.page.as_ref().expect("slot must have a page");
-                !p.is_loaded() && !p.is_locked()
-            };
-            if stale {
+            let p = self.entries[slot]
+                .page
+                .as_ref()
+                .expect("slot must have a page");
+
+            if !p.is_loaded() && !p.is_locked() {
                 // evict, then continue with fresh insert
                 self._delete(key, true)?;
                 let slot_index = self.find_free_slot()?;
-                {
-                    let entries = &mut self.entries;
-                    let entry = &mut entries[slot_index];
-                    entry.key = key;
-                    entry.page = Some(value);
-                    entry.clear_ref();
-                }
+                let entry = &mut self.entries[slot_index];
+                entry.key = key;
+                entry.page = Some(value);
+                entry.clear_ref();
                 self.map.insert(key, slot_index);
                 self.link_front(slot_index);
                 return Ok(());
             }
 
             self.move_to_front(slot);
-            {
-                let existing = &mut self.entries[slot];
-                existing.bump_ref();
-                if update_in_place {
-                    existing.page = Some(value);
-                    return Ok(());
-                } else {
-                    turso_assert!(
-                        Arc::ptr_eq(existing.page.as_ref().unwrap(), &value),
-                        "Attempted to insert different page with same key: {key:?}"
-                    );
-                    return Err(CacheError::KeyExists);
-                }
+            let existing = &mut self.entries[slot];
+            existing.bump_ref();
+            if update_in_place {
+                existing.page = Some(value);
+                return Ok(());
+            } else {
+                turso_assert!(
+                    Arc::ptr_eq(existing.page.as_ref().unwrap(), &value),
+                    "Attempted to insert different page with same key: {key:?}"
+                );
+                return Err(CacheError::KeyExists);
             }
         }
         // Key doesn't exist, proceed with new entry
         self.make_room_for(1)?;
         let slot_index = self.find_free_slot()?;
-        {
-            let entries = &mut self.entries;
-            let entry = &mut entries[slot_index];
-            turso_assert!(entry.page.is_none(), "page must be None in free slot");
-            entry.key = key;
-            entry.page = Some(value);
-            // Sieve ref bit starts cleared, will be set on first access
-            entry.clear_ref();
-        }
+        let entry = &mut self.entries[slot_index];
+        turso_assert!(entry.page.is_none(), "page must be None in free slot");
+        entry.key = key;
+        entry.page = Some(value);
+        // Sieve ref bit starts cleared, will be set on first access
+        entry.clear_ref();
         self.map.insert(key, slot_index);
         self.link_front(slot_index);
         Ok(())
@@ -313,20 +305,15 @@ impl PageCache {
             return Ok(());
         }
 
-        let (entry, slot_idx) = {
-            let map = &self.map;
-            let idx = map.get(&key).ok_or_else(|| {
-                CacheError::InternalError("Key exists but not found in map".into())
-            })?;
-            (
-                self.entries[idx]
-                    .page
-                    .as_ref()
-                    .expect("page in map was None")
-                    .clone(),
-                idx,
-            )
-        };
+        let slot_idx = self
+            .map
+            .get(&key)
+            .ok_or_else(|| CacheError::InternalError("Key exists but not found in map".into()))?;
+        let entry = self.entries[slot_idx]
+            .page
+            .as_ref()
+            .expect("page in map was None")
+            .clone();
 
         if entry.is_locked() {
             return Err(CacheError::Locked {
@@ -351,13 +338,11 @@ impl PageCache {
 
         self.unlink(slot_idx);
         self.map.remove(&key);
-        {
-            let entry = &mut self.entries[slot_idx];
-            entry.page = None;
-            entry.clear_ref();
-            entry.reset_links();
-            self.freelist.push(slot_idx);
-        }
+        let entry = &mut self.entries[slot_idx];
+        entry.page = None;
+        entry.clear_ref();
+        entry.reset_links();
+        self.freelist.push(slot_idx);
         Ok(())
     }
 
@@ -377,15 +362,13 @@ impl PageCache {
         // However, if we do not evict that page from the page cache, we will return an unloaded page later which will trigger
         // assertions later on. This is worsened by the fact that page cache is not per `Statement`, so you can abort a completion
         // in one Statement, and trigger some error in the next one if we don't evict the page here.
-        let page = {
-            let entry = &self.entries[slot];
-            entry.bump_ref();
-            entry
-                .page
-                .as_ref()
-                .expect("page in the map to exist")
-                .clone()
-        };
+        let entry = &self.entries[slot];
+        entry.bump_ref();
+        let page = entry
+            .page
+            .as_ref()
+            .expect("page in the map to exist")
+            .clone();
         if !page.is_loaded() && !page.is_locked() {
             self.delete(*key)?;
             Ok(None)
@@ -397,11 +380,11 @@ impl PageCache {
     #[inline]
     pub fn peek(&self, key: &PageCacheKey, touch: bool) -> Option<PageRef> {
         let slot = self.map.get(key)?;
-        let entries = &self.entries;
-        let page = entries[slot].page.as_ref()?.clone();
+        let entry = &self.entries[slot];
+        let page = entry.page.as_ref()?.clone();
         if touch {
             // set reference bit to 'touch' page
-            entries[slot].bump_ref();
+            entry.bump_ref();
         }
         Some(page)
     }
@@ -460,16 +443,13 @@ impl PageCache {
         self.tail.set(NULL);
 
         // Repack compactly: survivors[tail..head] pushed to front -> final order == original
-        {
-            let entries_mut = &mut self.entries;
-            for (slot, pl) in survivors.iter().enumerate().take(new_cap) {
-                let e = &mut entries_mut[slot];
-                e.key = pl.key;
-                e.page = Some(pl.page.clone());
-                e.ref_bit.set(pl.ref_bit);
-                e.reset_links();
-                new_map.insert(pl.key, slot);
-            }
+        for (slot, pl) in survivors.iter().enumerate().take(new_cap) {
+            let e = &mut self.entries[slot];
+            e.key = pl.key;
+            e.page = Some(pl.page.clone());
+            e.ref_bit.set(pl.ref_bit);
+            e.reset_links();
+            new_map.insert(pl.key, slot);
         }
         for slot in 0..survivors.len().min(new_cap) {
             self.link_front(slot);
@@ -478,12 +458,10 @@ impl PageCache {
 
         // Rebuild freelist
         let used = survivors.len().min(new_cap);
-        {
-            let fl = &mut self.freelist;
-            fl.clear();
-            for i in (used..new_cap).rev() {
-                fl.push(i);
-            }
+        let fl = &mut self.freelist;
+        fl.clear();
+        for i in (used..new_cap).rev() {
+            fl.push(i);
         }
 
         CacheResizeResult::Done
@@ -527,13 +505,10 @@ impl PageCache {
                 t => t,
             };
 
-            let (was_marked, key) = {
-                let entries = &mut self.entries;
-                let s = &mut entries[tail_idx];
-                turso_assert!(s.page.is_some(), "tail points to empty slot");
-                (!matches!(s.decrement_ref(), RefBit::Clear), s.key)
-            };
-
+            let s = &mut self.entries[tail_idx];
+            turso_assert!(s.page.is_some(), "tail points to empty slot");
+            let key = s.key;
+            let was_marked = !matches!(s.decrement_ref(), RefBit::Clear);
             examined += 1;
 
             if was_marked {
@@ -576,12 +551,10 @@ impl PageCache {
         self.map.clear();
         self.head.set(NULL);
         self.tail.set(NULL);
-        {
-            let fl = &mut self.freelist;
-            fl.clear();
-            for i in (0..self.capacity).rev() {
-                fl.push(i);
-            }
+        let fl = &mut self.freelist;
+        fl.clear();
+        for i in (0..self.capacity).rev() {
+            fl.push(i);
         }
         Ok(())
     }
