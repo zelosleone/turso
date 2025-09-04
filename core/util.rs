@@ -679,11 +679,11 @@ pub(crate) fn type_from_name(type_name: &str) -> (Type, bool) {
         return (Type::Integer, true);
     }
 
-    if let Some(ty) = type_name.windows(4).find_map(|s| {
-        if contains_ignore_ascii_case!(s, b"INT") {
-            return Some(Type::Integer);
-        }
+    if contains_ignore_ascii_case!(type_name, b"INT") {
+        return (Type::Integer, false);
+    }
 
+    if let Some(ty) = type_name.windows(4).find_map(|s| {
         match_ignore_ascii_case!(match s {
             b"CHAR" | b"CLOB" | b"TEXT" => Some(Type::Text),
             b"BLOB" => Some(Type::Blob),
