@@ -8146,39 +8146,23 @@ impl Value {
     }
 
     pub fn exec_concat(&self, rhs: &Value) -> Value {
-        match (self, rhs) {
-            (Value::Text(lhs_text), Value::Text(rhs_text)) => {
-                Value::build_text(lhs_text.as_str().to_string() + rhs_text.as_str())
-            }
-            (Value::Text(lhs_text), Value::Integer(rhs_int)) => {
-                Value::build_text(lhs_text.as_str().to_string() + &rhs_int.to_string())
-            }
-            (Value::Text(lhs_text), Value::Float(rhs_float)) => {
-                Value::build_text(lhs_text.as_str().to_string() + &rhs_float.to_string())
-            }
-            (Value::Integer(lhs_int), Value::Text(rhs_text)) => {
-                Value::build_text(lhs_int.to_string() + rhs_text.as_str())
-            }
-            (Value::Integer(lhs_int), Value::Integer(rhs_int)) => {
-                Value::build_text(lhs_int.to_string() + &rhs_int.to_string())
-            }
-            (Value::Integer(lhs_int), Value::Float(rhs_float)) => {
-                Value::build_text(lhs_int.to_string() + &rhs_float.to_string())
-            }
-            (Value::Float(lhs_float), Value::Text(rhs_text)) => {
-                Value::build_text(lhs_float.to_string() + rhs_text.as_str())
-            }
-            (Value::Float(lhs_float), Value::Integer(rhs_int)) => {
-                Value::build_text(lhs_float.to_string() + &rhs_int.to_string())
-            }
-            (Value::Float(lhs_float), Value::Float(rhs_float)) => {
-                Value::build_text(lhs_float.to_string() + &rhs_float.to_string())
-            }
-            (Value::Null, _) | (_, Value::Null) => Value::Null,
-            (Value::Blob(_), _) | (_, Value::Blob(_)) => {
-                todo!("TODO: Handle Blob conversion to String")
-            }
+        if let (Value::Blob(lhs), Value::Blob(rhs)) = (self, rhs) {
+            return Value::build_text(String::from_utf8_lossy(dbg!(&[
+                lhs.as_slice(),
+                rhs.as_slice()
+            ]
+            .concat())));
         }
+
+        let Some(lhs) = self.cast_text() else {
+            return Value::Null;
+        };
+
+        let Some(rhs) = rhs.cast_text() else {
+            return Value::Null;
+        };
+
+        Value::build_text(lhs + &rhs)
     }
 
     pub fn exec_and(&self, rhs: &Value) -> Value {

@@ -15,6 +15,7 @@ use crate::lexer::{Lexer, Token};
 use crate::token::TokenType::{self, *};
 use crate::Result;
 use turso_macros::match_ignore_ascii_case;
+use std::str;
 
 macro_rules! peek_expect {
     ( $parser:expr, $( $x:ident ),* $(,)?) => {
