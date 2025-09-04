@@ -143,6 +143,10 @@ impl Builder {
                 turso_core::UringIO::new()
                     .map_err(|e| Error::SqlExecutionFailure(e.to_string()))?,
             )),
+            #[cfg(not(target_os = "linux"))]
+            "io_uring" => Err(Error::SqlExecutionFailure(
+                "io_uring is only available on Linux targets".to_string(),
+            )),
             "" => {
                 // Default behavior: memory for ":memory:", platform IO for files
                 if self.path == ":memory:" {
