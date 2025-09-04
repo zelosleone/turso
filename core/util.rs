@@ -1370,6 +1370,7 @@ pub fn extract_view_columns(select_stmt: &ast::Select, schema: &Schema) -> Vec<C
 #[cfg(test)]
 pub mod tests {
     use super::*;
+    use crate::schema::Type as SchemaValueType;
     use turso_parser::ast::{self, Expr, Literal, Name, Operator::*, Type};
 
     #[test]
@@ -2358,5 +2359,27 @@ pub mod tests {
         assert!(parse_pragma_bool(&Expr::Name(Name::Ident("nono".into()))).is_err());
         assert!(parse_pragma_bool(&Expr::Name(Name::Ident("10".into()))).is_err());
         assert!(parse_pragma_bool(&Expr::Name(Name::Ident("-1".into()))).is_err());
+    }
+
+    #[test]
+    fn test_type_from_name() {
+        let tc = vec![
+            ("", (SchemaValueType::Blob, false)),
+            ("INTEGER", (SchemaValueType::Integer, true)),
+            ("INT", (SchemaValueType::Integer, false)),
+            ("CHAR", (SchemaValueType::Text, false)),
+            ("CLOB", (SchemaValueType::Text, false)),
+            ("TEXT", (SchemaValueType::Text, false)),
+            ("BLOB", (SchemaValueType::Blob, false)),
+            ("REAL", (SchemaValueType::Real, false)),
+            ("FLOAT", (SchemaValueType::Real, false)),
+            ("DOUBLE", (SchemaValueType::Real, false)),
+            ("U128", (SchemaValueType::Numeric, false)),
+        ];
+
+        for (input, expected) in tc {
+            let result = type_from_name(input);
+            assert_eq!(result, expected, "Failed for input: {}", input);
+        }
     }
 }
