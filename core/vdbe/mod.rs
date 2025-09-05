@@ -69,6 +69,17 @@ use std::{
 };
 use tracing::{instrument, Level};
 
+/// State machine for committing view deltas with I/O handling
+#[derive(Debug, Clone)]
+pub enum ViewDeltaCommitState {
+    NotStarted,
+    Processing {
+        views: Vec<String>, // view names (all materialized views have storage)
+        current_index: usize,
+    },
+    Done,
+}
+
 /// We use labels to indicate that we want to jump to whatever the instruction offset
 /// will be at runtime, because the offset cannot always be determined when the jump
 /// instruction is created.
@@ -284,6 +295,8 @@ pub struct ProgramState {
     current_collation: Option<CollationSeq>,
     op_column_state: OpColumnState,
     op_row_id_state: OpRowIdState,
+    /// State machine for committing view deltas with I/O handling
+    view_delta_state: ViewDeltaCommitState,
 }
 
 impl ProgramState {
@@ -326,6 +339,7 @@ impl ProgramState {
             current_collation: None,
             op_column_state: OpColumnState::Start,
             op_row_id_state: OpRowIdState::Start,
+            view_delta_state: ViewDeltaCommitState::NotStarted,
         }
     }
 
@@ -413,6 +427,7 @@ macro_rules! must_be_btree_cursor {
         let cursor = match cursor_type {
             CursorType::BTreeTable(_) => $state.get_cursor($cursor_id),
             CursorType::BTreeIndex(_) => $state.get_cursor($cursor_id),
+            CursorType::MaterializedView(_, _) => $state.get_cursor($cursor_id),
             CursorType::Pseudo(_) => panic!("{} on pseudo cursor", $insn_name),
             CursorType::Sorter => panic!("{} on sorter cursor", $insn_name),
             CursorType::VirtualTable(_) => panic!("{} on virtual table cursor", $insn_name),
@@ -518,20 +533,97 @@ impl Program {
     }
 
     #[instrument(skip_all, level = Level::DEBUG)]
-    fn apply_view_deltas(&self, rollback: bool) {
-        if self.connection.view_transaction_states.borrow().is_empty() {
-            return;
-        }
+    fn apply_view_deltas(
+        &self,
+        state: &mut ProgramState,
+        rollback: bool,
+        pager: &Rc<Pager>,
+    ) -> Result<IOResult<()>> {
+        use crate::types::IOResult;
 
-        let tx_states = self.connection.view_transaction_states.take();
+        loop {
+            match &state.view_delta_state {
+                ViewDeltaCommitState::NotStarted => {
+                    if self.connection.view_transaction_states.is_empty() {
+                        return Ok(IOResult::Done(()));
+                    }
 
-        if !rollback {
-            let schema = self.connection.schema.borrow();
+                    if rollback {
+                        // On rollback, just clear and done
+                        self.connection.view_transaction_states.clear();
+                        return Ok(IOResult::Done(()));
+                    }
 
-            for (view_name, tx_state) in tx_states.iter() {
-                if let Some(view_mutex) = schema.get_materialized_view(view_name) {
-                    let mut view = view_mutex.lock().unwrap();
-                    view.merge_delta(&tx_state.delta);
+                    // Not a rollback - proceed with processing
+                    let schema = self.connection.schema.borrow();
+
+                    // Collect materialized views - they should all have storage
+                    let mut views = Vec::new();
+                    for view_name in self.connection.view_transaction_states.get_view_names() {
+                        if let Some(view_mutex) = schema.get_materialized_view(&view_name) {
+                            let view = view_mutex.lock().unwrap();
+                            let root_page = view.get_root_page();
+
+                            // Materialized views should always have storage (root_page != 0)
+                            assert!(
+                                root_page != 0,
+                                "Materialized view '{view_name}' should have a root page"
+                            );
+
+                            views.push(view_name);
+                        }
+                    }
+
+                    state.view_delta_state = ViewDeltaCommitState::Processing {
+                        views,
+                        current_index: 0,
+                    };
+                }
+
+                ViewDeltaCommitState::Processing {
+                    views,
+                    current_index,
+                } => {
+                    // At this point we know it's not a rollback
+                    if *current_index >= views.len() {
+                        // All done, clear the transaction states
+                        self.connection.view_transaction_states.clear();
+                        state.view_delta_state = ViewDeltaCommitState::Done;
+                        return Ok(IOResult::Done(()));
+                    }
+
+                    let view_name = &views[*current_index];
+
+                    let delta = self
+                        .connection
+                        .view_transaction_states
+                        .get(view_name)
+                        .unwrap()
+                        .get_delta();
+
+                    let schema = self.connection.schema.borrow();
+                    if let Some(view_mutex) = schema.get_materialized_view(view_name) {
+                        let mut view = view_mutex.lock().unwrap();
+
+                        // Handle I/O from merge_delta - pass pager, circuit will create its own cursor
+                        match view.merge_delta(&delta, pager.clone())? {
+                            IOResult::Done(_) => {
+                                // Move to next view
+                                state.view_delta_state = ViewDeltaCommitState::Processing {
+                                    views: views.clone(),
+                                    current_index: current_index + 1,
+                                };
+                            }
+                            IOResult::IO(io) => {
+                                // Return I/O, will resume at same index
+                                return Ok(IOResult::IO(io));
+                            }
+                        }
+                    }
+                }
+
+                ViewDeltaCommitState::Done => {
+                    return Ok(IOResult::Done(()));
                 }
             }
         }
@@ -544,7 +636,14 @@ impl Program {
         mv_store: Option<&Arc<MvStore>>,
         rollback: bool,
     ) -> Result<IOResult<()>> {
-        self.apply_view_deltas(rollback);
+        // Apply view deltas with I/O handling
+        match self.apply_view_deltas(program_state, rollback, &pager)? {
+            IOResult::IO(io) => return Ok(IOResult::IO(io)),
+            IOResult::Done(_) => {}
+        }
+
+        // Reset state for next use
+        program_state.view_delta_state = ViewDeltaCommitState::NotStarted;
 
         if self.connection.transaction_state.get() == TransactionState::None && mv_store.is_none() {
             // No need to do any work here if not in tx. Current MVCC logic doesn't work with this assumption,

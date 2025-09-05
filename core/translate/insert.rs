@@ -63,6 +63,7 @@ pub fn translate_insert(
     if with.is_some() {
         crate::bail_parse_error!("WITH clause is not supported");
     }
+
     if on_conflict.is_some() {
         crate::bail_parse_error!("ON CONFLICT clause is not supported");
     }
@@ -85,6 +86,11 @@ pub fn translate_insert(
         Some(table) => table,
         None => crate::bail_parse_error!("no such table: {}", table_name),
     };
+
+    // Check if this is a materialized view
+    if schema.is_materialized_view(table_name.as_str()) {
+        crate::bail_parse_error!("cannot modify materialized view {}", table_name);
+    }
 
     let resolver = Resolver::new(schema, syms);
 

@@ -3,7 +3,7 @@ use turso_parser::ast::{self, SortOrder};
 
 use crate::{
     function::AggFunc,
-    schema::{BTreeTable, Column, FromClauseSubquery, Index, Table},
+    schema::{BTreeTable, Column, FromClauseSubquery, Index, Schema, Table},
     vdbe::{
         builder::{CursorKey, CursorType, ProgramBuilder},
         insn::{IdxInsertFlags, Insn},
@@ -852,6 +852,7 @@ impl JoinedTable {
         &self,
         program: &mut ProgramBuilder,
         mode: OperationMode,
+        schema: &Schema,
     ) -> Result<(Option<CursorID>, Option<CursorID>)> {
         let index = self.op.index();
         match &self.table {
@@ -863,10 +864,17 @@ impl JoinedTable {
                 let table_cursor_id = if table_not_required {
                     None
                 } else {
-                    Some(program.alloc_cursor_id_keyed(
-                        CursorKey::table(self.internal_id),
-                        CursorType::BTreeTable(btree.clone()),
-                    ))
+                    // Check if this is a materialized view
+                    let cursor_type =
+                        if let Some(view_mutex) = schema.get_materialized_view(&btree.name) {
+                            CursorType::MaterializedView(btree.clone(), view_mutex)
+                        } else {
+                            CursorType::BTreeTable(btree.clone())
+                        };
+                    Some(
+                        program
+                            .alloc_cursor_id_keyed(CursorKey::table(self.internal_id), cursor_type),
+                    )
                 };
                 let index_cursor_id = index.map(|index| {
                     program.alloc_cursor_id_keyed(

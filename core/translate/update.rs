@@ -140,6 +140,12 @@ pub fn prepare_update_plan(
         Some(table) => table,
         None => bail_parse_error!("Parse error: no such table: {}", table_name),
     };
+
+    // Check if this is a materialized view
+    if schema.is_materialized_view(table_name.as_str()) {
+        bail_parse_error!("cannot modify materialized view {}", table_name);
+    }
+
     let table_name = table.get_name();
     let iter_dir = body
         .order_by

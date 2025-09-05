@@ -3,9 +3,9 @@ use std::sync::Arc;
 use super::{
     expr::walk_expr,
     plan::{
-        Aggregate, ColumnUsedMask, Distinctness, EvalAt, JoinInfo, JoinOrderMember, JoinedTable,
-        Operation, OuterQueryReference, Plan, QueryDestination, ResultSetColumn, Scan,
-        TableReferences, WhereTerm,
+        Aggregate, ColumnUsedMask, Distinctness, EvalAt, IterationDirection, JoinInfo,
+        JoinOrderMember, JoinedTable, Operation, OuterQueryReference, Plan, QueryDestination,
+        ResultSetColumn, Scan, TableReferences, WhereTerm,
     },
     select::prepare_select_plan,
     SymbolTable,
@@ -529,12 +529,29 @@ fn parse_table(
         schema.get_materialized_view(table_name.as_str())
     });
     if let Some(view) = view {
-        // Create a virtual table wrapper for the view
-        // We'll use the view's columns from the schema
-        let vtab = crate::vtab_view::create_view_virtual_table(
-            normalize_ident(table_name.as_str()).as_str(),
-            view.clone(),
-        )?;
+        // Check if this materialized view has persistent storage
+        let view_guard = view.lock().unwrap();
+        let root_page = view_guard.get_root_page();
+
+        if root_page == 0 {
+            drop(view_guard);
+            return Err(crate::LimboError::InternalError(
+                "Materialized view has no storage allocated".to_string(),
+            ));
+        }
+
+        // This is a materialized view with storage - treat it as a regular BTree table
+        // Create a BTreeTable from the view's metadata
+        let btree_table = Arc::new(crate::schema::BTreeTable {
+            name: view_guard.name().to_string(),
+            root_page,
+            columns: view_guard.columns.clone(),
+            primary_key_columns: Vec::new(),
+            has_rowid: true,
+            is_strict: false,
+            unique_sets: None,
+        });
+        drop(view_guard);
 
         let alias = maybe_alias
             .map(|a| match a {
@@ -544,12 +561,11 @@ fn parse_table(
             .map(|a| normalize_ident(a.as_str()));
 
         table_references.add_joined_table(JoinedTable {
-            op: Operation::Scan(Scan::VirtualTable {
-                idx_num: -1,
-                idx_str: None,
-                constraints: Vec::new(),
+            op: Operation::Scan(Scan::BTreeTable {
+                iter_dir: IterationDirection::Forwards,
+                index: None,
             }),
-            table: Table::Virtual(vtab),
+            table: Table::BTree(btree_table),
             identifier: alias.unwrap_or(normalized_qualified_name),
             internal_id: table_ref_counter.next(),
             join_info: None,

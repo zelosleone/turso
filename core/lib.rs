@@ -32,7 +32,6 @@ mod uuid;
 mod vdbe;
 mod vector;
 mod vtab;
-mod vtab_view;
 
 #[cfg(feature = "fuzz")]
 pub mod numeric;
@@ -40,7 +39,7 @@ pub mod numeric;
 #[cfg(not(feature = "fuzz"))]
 mod numeric;
 
-use crate::incremental::view::ViewTransactionState;
+use crate::incremental::view::AllViewsTxState;
 use crate::storage::encryption::CipherMode;
 use crate::translate::optimizer::optimize_plan;
 use crate::translate::pragma::TURSO_CDC_DEFAULT_TABLE_NAME;
@@ -441,13 +440,6 @@ impl Database {
                 Ok(())
             })?;
         }
-        // FIXME: the correct way to do this is to just materialize the view.
-        // But this will allow us to keep going.
-        let conn = db.connect()?;
-        let pager = conn.pager.borrow().clone();
-        pager
-            .io
-            .block(|| conn.schema.borrow().populate_materialized_views(&conn))?;
         Ok(db)
     }
 
@@ -489,7 +481,7 @@ impl Database {
             attached_databases: RefCell::new(DatabaseCatalog::new()),
             query_only: Cell::new(false),
             mv_tx_id: Cell::new(None),
-            view_transaction_states: RefCell::new(HashMap::new()),
+            view_transaction_states: AllViewsTxState::new(),
             metrics: RefCell::new(ConnectionMetrics::new()),
             is_nested_stmt: Cell::new(false),
             encryption_key: RefCell::new(None),
@@ -926,7 +918,7 @@ pub struct Connection {
 
     /// Per-connection view transaction states for uncommitted changes. This represents
     /// one entry per view that was touched in the transaction.
-    view_transaction_states: RefCell<HashMap<String, ViewTransactionState>>,
+    view_transaction_states: AllViewsTxState,
     /// Connection-level metrics aggregation
     pub metrics: RefCell<ConnectionMetrics>,
     /// Whether the connection is executing a statement initiated by another statement.
@@ -1072,7 +1064,7 @@ impl Connection {
 
         // Preserve existing views to avoid expensive repopulation.
         // TODO: We may not need to do this if we materialize our views.
-        let existing_views = self.schema.borrow().materialized_views.clone();
+        let existing_views = self.schema.borrow().incremental_views.clone();
 
         // TODO: this is hack to avoid a cyclical problem with schema reprepare
         // The problem here is that we prepare a statement here, but when the statement tries
@@ -1096,13 +1088,6 @@ impl Connection {
         self.with_schema_mut(|schema| {
             *schema = fresh;
         });
-
-        {
-            let schema = self.schema.borrow();
-            pager
-                .io
-                .block(|| schema.populate_materialized_views(self))?;
-        }
         Result::Ok(())
     }
 
@@ -1716,7 +1701,7 @@ impl Connection {
             .expect("query must be parsed to statement");
         let syms = self.syms.borrow();
         self.with_schema_mut(|schema| {
-            let existing_views = schema.materialized_views.clone();
+            let existing_views = schema.incremental_views.clone();
             if let Err(LimboError::ExtensionError(e)) =
                 parse_schema_rows(rows, schema, &syms, None, existing_views)
             {
