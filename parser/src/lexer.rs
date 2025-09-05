@@ -1243,7 +1243,7 @@ mod tests {
             (
                 b"1.e5".as_slice(),
                 Token {
-                    value: b"1.e5".as_slice(), // 'X' is not included in the value
+                    value: b"1.e5".as_slice(),
                     token_type: Some(TokenType::TK_FLOAT),
                 },
             ),
