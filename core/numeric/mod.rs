@@ -683,7 +683,9 @@ pub fn format_float(v: f64) -> String {
             negative.then_some("-").unwrap_or_default(),
             if decimal_pos > 0 {
                 let zeroes = (decimal_pos - digits.len() as i32).max(0) as usize;
-                let digits = digits.get(0..(decimal_pos.min(digits.len() as i32) as usize)).unwrap();
+                let digits = digits
+                    .get(0..(decimal_pos.min(digits.len() as i32) as usize))
+                    .unwrap();
                 (unsafe { str::from_utf8_unchecked(digits) }).to_owned() + &"0".repeat(zeroes)
             } else {
                 "0".to_string()

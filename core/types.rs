@@ -18,7 +18,6 @@ use crate::vtab::VirtualTableCursor;
 use crate::{turso_assert, Completion, CompletionError, Result, IO};
 use std::fmt::{Debug, Display};
 
-
 /// SQLite by default uses 2000 as maximum numbers in a row.
 /// It controlld by the constant called SQLITE_MAX_COLUMN
 /// But the hard limit of number of columns is 32,767 columns i16::MAX
@@ -667,7 +666,7 @@ impl PartialEq<Value> for Value {
     fn eq(&self, other: &Value) -> bool {
         match (self, other) {
             (Self::Integer(int_left), Self::Integer(int_right)) => int_left == int_right,
-            (Self::Integer(int), Self::Float(float)) | (Self::Float(float), Self::Integer(int))=> {
+            (Self::Integer(int), Self::Float(float)) | (Self::Float(float), Self::Integer(int)) => {
                 int_float_cmp(*int, *float).is_eq()
             }
             (Self::Float(float_left), Self::Float(float_right)) => float_left == float_right,
