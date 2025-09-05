@@ -149,10 +149,7 @@ mod tests {
     fn test_prepare_misuse() {
         unsafe {
             let mut db = ptr::null_mut();
-            assert_eq!(
-                sqlite3_open(c"../testing/testing_clone.db".as_ptr(), &mut db),
-                SQLITE_OK
-            );
+            assert_eq!(sqlite3_open(c":memory:".as_ptr(), &mut db), SQLITE_OK);
 
             let mut stmt = ptr::null_mut();
             assert_eq!(
