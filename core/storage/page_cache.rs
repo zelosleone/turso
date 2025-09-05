@@ -157,24 +157,31 @@ impl PageCache {
     }
 
     #[inline]
-    fn link_at_head(&self, slot: usize) {
-        let old_head = self.head.replace(slot);
-        self.entries[slot].next.set(old_head);
-        self.entries[slot].prev.set(NULL);
-
-        if old_head != NULL {
-            self.entries[old_head].prev.set(slot);
+    fn link_after(&self, a: usize, b: usize) {
+        // insert `b` after `a`
+        let an = self.entries[a].next.get();
+        self.entries[b].prev.set(a);
+        self.entries[b].next.set(an);
+        if an != NULL {
+            self.entries[an].prev.set(b);
         } else {
-            // List was empty, this is now both head and tail
-            turso_assert!(
-                self.tail.get() == NULL,
-                "tail must be NULL if head was NULL"
-            );
-            self.tail.set(slot);
+            self.tail.set(b);
         }
-        // If hand was NULL/list was empty, set it to the new element
-        if self.clock_hand.get() == NULL {
+        self.entries[a].next.set(b);
+    }
+
+    #[inline]
+    fn link_new_node(&self, slot: usize) {
+        let hand = self.clock_hand.get();
+        if hand == NULL {
+            // first element
+            self.head.set(slot);
+            self.tail.set(slot);
+            self.entries[slot].prev.set(NULL);
+            self.entries[slot].next.set(NULL);
             self.clock_hand.set(slot);
+        } else {
+            self.link_after(hand, slot);
         }
     }
 
@@ -233,7 +240,7 @@ impl PageCache {
                 entry.page = Some(value);
                 entry.clear_ref();
                 self.map.insert(key, slot_index);
-                self.link_at_head(slot_index);
+                self.link_new_node(slot_index);
                 return Ok(());
             }
 
@@ -260,7 +267,7 @@ impl PageCache {
         // Sieve ref bit starts cleared, will be set on first access
         entry.clear_ref();
         self.map.insert(key, slot_index);
-        self.link_at_head(slot_index);
+        self.link_new_node(slot_index);
         Ok(())
     }
 
@@ -445,7 +452,7 @@ impl PageCache {
             new_map.insert(pl.key, slot);
         }
         for slot in 0..survivors.len().min(new_cap) {
-            self.link_at_head(slot);
+            self.link_new_node(slot);
         }
         self.map = new_map;
 
@@ -517,14 +524,7 @@ impl PageCache {
             };
 
             if evictable_and_clear {
-                let key = self.entries[current].key;
-                // hand moves forward, if we were at head (forward == NULL), wrap to tail
-                self.clock_hand.set(if forward != NULL {
-                    forward
-                } else {
-                    self.tail.get()
-                });
-                self._delete(key, true)?;
+                self.evict_slot(current, true)?;
                 need -= 1;
                 examined = 0;
                 current = self.clock_hand.get();
@@ -563,6 +563,42 @@ impl PageCache {
         for i in (0..self.capacity).rev() {
             fl.push(i);
         }
+        Ok(())
+    }
+
+    #[inline]
+    /// preconditions: slot contains Some(page) and is clean/unlocked/unpinned
+    fn evict_slot(&mut self, slot: usize, clean_page: bool) -> Result<(), CacheError> {
+        let key = self.entries[slot].key;
+
+        if clean_page {
+            if let Some(ref p) = self.entries[slot].page {
+                p.clear_loaded();
+                let _ = p.get().contents.take();
+            }
+        }
+
+        // advance the hand off of `slot` using your forward direction (prev == toward head)
+        let next = self.entries[slot].next.get();
+        let prev = self.entries[slot].prev.get();
+        if self.clock_hand.get() == slot {
+            self.clock_hand.set(match (prev, next) {
+                // prefer forward progress
+                (_, n) if n != NULL => n,
+                (p, _) if p != NULL => p,
+                _ => NULL,
+            });
+        }
+        self.unlink(slot);
+        let _ = self.map.remove(&key);
+
+        // recycle the slot
+        let e = &mut self.entries[slot];
+        e.page = None;
+        e.clear_ref();
+        e.reset_links();
+        self.freelist.push(slot);
+
         Ok(())
     }
 
