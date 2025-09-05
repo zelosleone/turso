@@ -111,6 +111,7 @@ pub struct PageCache {
     /// Pointers to intrusive doubly-linked list for eviction order
     head: Cell<usize>,
     tail: Cell<usize>,
+    clock_hand: Cell<usize>,
     /// Fixed-size vec holding page entries
     entries: Vec<PageCacheEntry>,
     /// Free list: Stack of available slot indices
@@ -165,23 +166,27 @@ impl PageCache {
             map: PageHashMap::new(capacity),
             head: Cell::new(NULL),
             tail: Cell::new(NULL),
+            clock_hand: Cell::new(NULL),
             entries: vec![PageCacheEntry::empty(); capacity],
             freelist,
         }
     }
 
     #[inline]
-    fn link_front(&self, slot: usize) {
+    fn link_at_head(&self, slot: usize) {
         let old_head = self.head.replace(slot);
-
         self.entries[slot].next.set(old_head);
         self.entries[slot].prev.set(NULL);
 
         if old_head != NULL {
             self.entries[old_head].prev.set(slot);
         } else {
-            // list was empty
+            // List was empty, this is now both head and tail
             self.tail.set(slot);
+        }
+        // If hand was NULL/list was empty, set it to the new element
+        if self.clock_hand.get() == NULL {
+            self.clock_hand.set(slot);
         }
     }
 
@@ -202,16 +207,6 @@ impl PageCache {
         }
 
         self.entries[slot].reset_links();
-    }
-
-    #[inline]
-    fn move_to_front(&self, slot: usize) {
-        if self.head.get() == slot {
-            return;
-        }
-        turso_assert!(self.entries[slot].page.is_some(), "must be linked");
-        self.unlink(slot);
-        self.link_front(slot);
     }
 
     pub fn contains_key(&self, key: &PageCacheKey) -> bool {
@@ -251,11 +246,10 @@ impl PageCache {
                 entry.page = Some(value);
                 entry.clear_ref();
                 self.map.insert(key, slot_index);
-                self.link_front(slot_index);
+                self.link_at_head(slot_index);
                 return Ok(());
             }
 
-            self.move_to_front(slot);
             let existing = &mut self.entries[slot];
             existing.bump_ref();
             if update_in_place {
@@ -279,7 +273,7 @@ impl PageCache {
         // Sieve ref bit starts cleared, will be set on first access
         entry.clear_ref();
         self.map.insert(key, slot_index);
-        self.link_front(slot_index);
+        self.link_at_head(slot_index);
         Ok(())
     }
 
@@ -452,7 +446,7 @@ impl PageCache {
             new_map.insert(pl.key, slot);
         }
         for slot in 0..survivors.len().min(new_cap) {
-            self.link_front(slot);
+            self.link_at_head(slot);
         }
         self.map = new_map;
 
@@ -481,56 +475,69 @@ impl PageCache {
             return Err(CacheError::Full);
         }
 
-        let len = self.len();
-        let available = self.capacity.saturating_sub(len);
-        if n <= available && len <= self.capacity {
+        let available = self.capacity.saturating_sub(self.len());
+        if n <= available {
             return Ok(());
         }
 
-        const MAX_REF: usize = 3;
-        let len = self.len();
-        let available = self.capacity.saturating_sub(len);
         let mut need = n - available;
-        let mut examined = 0usize;
-        // allow enough rotations to drain max credits (+ one for the eviction pass)
-        let max_examinations = len.saturating_mul(MAX_REF + 1);
+        let mut examined = 0;
+        // Max ref bit value + 1
+        let max_examinations = self.len() * 4;
 
+        // Start from where we left off, or from tail if hand is invalid
+        let mut current = self.clock_hand.get();
+        if current == NULL || self.entries[current].page.is_none() {
+            current = self.tail.get();
+        }
+        let start_position = current;
+        let mut wrapped = false;
         while need > 0 && examined < max_examinations {
-            let tail_idx = match self.tail.get() {
-                NULL => {
-                    return Err(CacheError::InternalError(
-                        "Tail is None but map not empty".into(),
-                    ))
-                }
-                t => t,
-            };
-
-            let s = &mut self.entries[tail_idx];
-            turso_assert!(s.page.is_some(), "tail points to empty slot");
-            let key = s.key;
-            let was_marked = !matches!(s.decrement_ref(), RefBit::Clear);
-            examined += 1;
-
-            if was_marked {
-                self.move_to_front(tail_idx);
-                continue;
+            if current == NULL {
+                break;
             }
+            let entry = &self.entries[current];
+            let next = entry.next.get();
 
-            match self._delete(key, true) {
-                Ok(_) => {
-                    need -= 1;
-                    examined = 0;
+            if let Some(ref page) = entry.page {
+                if !page.is_dirty() && !page.is_locked() && !page.is_pinned() {
+                    if matches!(entry.ref_bit.get(), RefBit::Clear) {
+                        // Evict this page
+                        let key = entry.key;
+                        self.clock_hand
+                            .set(if next != NULL { next } else { self.tail.get() });
+                        self._delete(key, true)?;
+                        need -= 1;
+                        examined = 0;
+                        // After deletion, current is invalid, use hand
+                        current = self.clock_hand.get();
+                        continue;
+                    } else {
+                        // Decrement and continue
+                        entry.decrement_ref();
+                        examined += 1;
+                    }
+                } else {
+                    examined += 1;
                 }
-                Err(
-                    CacheError::Dirty { .. }
-                    | CacheError::Locked { .. }
-                    | CacheError::Pinned { .. },
-                ) => {
-                    self.move_to_front(tail_idx);
-                }
-                Err(e) => return Err(e),
+            }
+            // Move to next
+            if next != NULL {
+                current = next;
+            } else if !wrapped {
+                // Wrap around to tail once
+                current = self.tail.get();
+                wrapped = true;
+            } else {
+                // We've wrapped and hit the end again
+                break;
+            }
+            // Stop if we've come full circle
+            if wrapped && current == start_position {
+                break;
             }
         }
+        self.clock_hand.set(current);
         if need > 0 {
             return Err(CacheError::Full);
         }
