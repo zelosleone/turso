@@ -18,7 +18,6 @@ use crate::util::{normalize_ident, IOExt as _};
 use crate::vdbe::insn::InsertFlags;
 use crate::vdbe::registers_to_ref_values;
 use crate::vector::{vector_concat, vector_slice};
-use crate::MvCursor;
 use crate::{
     error::{
         LimboError, SQLITE_CONSTRAINT, SQLITE_CONSTRAINT_NOTNULL, SQLITE_CONSTRAINT_PRIMARYKEY,
@@ -32,6 +31,7 @@ use crate::{
         printf::exec_printf,
     },
 };
+use crate::{get_cursor, MvCursor};
 use std::env::temp_dir;
 use std::ops::DerefMut;
 use std::{
@@ -124,6 +124,7 @@ macro_rules! return_if_io {
         }
     };
 }
+
 pub type InsnFunction = fn(
     &Program,
     &mut ProgramState,
@@ -405,7 +406,7 @@ pub fn op_null_row(
 ) -> Result<InsnFunctionStepResult> {
     load_insn!(NullRow { cursor_id }, insn);
     {
-        let mut cursor = must_be_btree_cursor!(*cursor_id, program.cursor_ref, state, "NullRow");
+        let cursor = must_be_btree_cursor!(*cursor_id, program.cursor_ref, state, "NullRow");
         let cursor = cursor.as_btree_mut();
         cursor.set_null_flag(true);
     }
@@ -949,7 +950,7 @@ pub fn op_open_read(
         }
         None => None,
     };
-    let mut cursors = state.cursors.borrow_mut();
+    let cursors = &mut state.cursors;
     let num_columns = match cursor_type {
         CursorType::BTreeTable(table_rc) => table_rc.columns.len(),
         CursorType::BTreeIndex(index_arc) => index_arc.columns.len(),
@@ -1038,7 +1039,6 @@ pub fn op_vopen(
     let cursor = virtual_table.open(program.connection.clone())?;
     state
         .cursors
-        .borrow_mut()
         .get_mut(*cursor_id)
         .unwrap_or_else(|| panic!("cursor id {} out of bounds", *cursor_id))
         .replace(Cursor::Virtual(cursor));
@@ -1106,7 +1106,7 @@ pub fn op_vfilter(
         insn
     );
     let has_rows = {
-        let mut cursor = state.get_cursor(*cursor_id);
+        let cursor = get_cursor!(state, *cursor_id);
         let cursor = cursor.as_virtual_mut();
         let mut args = Vec::with_capacity(*arg_count);
         for i in 0..*arg_count {
@@ -1147,7 +1147,7 @@ pub fn op_vcolumn(
         insn
     );
     let value = {
-        let mut cursor = state.get_cursor(*cursor_id);
+        let cursor = state.get_cursor(*cursor_id);
         let cursor = cursor.as_virtual_mut();
         cursor.column(*column)?
     };
@@ -1235,7 +1235,7 @@ pub fn op_vnext(
         insn
     );
     let has_more = {
-        let mut cursor = state.get_cursor(*cursor_id);
+        let cursor = state.get_cursor(*cursor_id);
         let cursor = cursor.as_virtual_mut();
         cursor.next()?
     };
@@ -1287,7 +1287,7 @@ pub fn op_open_pseudo(
         insn
     );
     {
-        let mut cursors = state.cursors.borrow_mut();
+        let cursors = &mut state.cursors;
         let cursor = PseudoCursor::default();
         cursors
             .get_mut(*cursor_id)
@@ -1314,8 +1314,8 @@ pub fn op_rewind(
     );
     assert!(pc_if_empty.is_offset());
     let is_empty = {
-        let mut cursor = state.get_cursor(*cursor_id);
-        match &mut *cursor {
+        let cursor = state.get_cursor(*cursor_id);
+        match cursor {
             Cursor::BTree(btree_cursor) => {
                 return_if_io!(btree_cursor.rewind());
                 btree_cursor.is_empty()
@@ -1353,7 +1353,7 @@ pub fn op_last(
     );
     assert!(pc_if_empty.is_offset());
     let is_empty = {
-        let mut cursor = must_be_btree_cursor!(*cursor_id, program.cursor_ref, state, "Last");
+        let cursor = must_be_btree_cursor!(*cursor_id, program.cursor_ref, state, "Last");
         let cursor = cursor.as_btree_mut();
         return_if_io!(cursor.last());
         cursor.is_empty()
@@ -1455,7 +1455,7 @@ pub fn op_column(
                 table_cursor_id,
             } => {
                 let rowid = {
-                    let mut index_cursor = state.get_cursor(index_cursor_id);
+                    let index_cursor = state.get_cursor(index_cursor_id);
                     let index_cursor = index_cursor.as_btree_mut();
                     return_if_io!(index_cursor.rowid())
                 };
@@ -1469,10 +1469,10 @@ pub fn op_column(
                 table_cursor_id,
             } => {
                 {
-                    let mut table_cursor = state.get_cursor(table_cursor_id);
+                    let table_cursor = state.get_cursor(table_cursor_id);
                     // MaterializedView cursors shouldn't go through deferred seek logic
                     // but if we somehow get here, handle it appropriately
-                    match &mut *table_cursor {
+                    match table_cursor {
                         Cursor::MaterializedView(mv_cursor) => {
                             // Seek to the rowid in the materialized view
                             return_if_io!(mv_cursor
@@ -1491,11 +1491,10 @@ pub fn op_column(
             OpColumnState::GetColumn => {
                 // First check if this is a MaterializedViewCursor
                 {
-                    let mut cursor = state.get_cursor(*cursor_id);
-                    if let Cursor::MaterializedView(mv_cursor) = &mut *cursor {
+                    let cursor = state.get_cursor(*cursor_id);
+                    if let Cursor::MaterializedView(mv_cursor) = cursor {
                         // Handle materialized view column access
                         let value = return_if_io!(mv_cursor.column(*column));
-                        drop(cursor);
                         state.registers[*dest] = Register::Value(value);
                         break 'outer;
                     }
@@ -1508,7 +1507,7 @@ pub fn op_column(
                     | CursorType::BTreeIndex(_)
                     | CursorType::MaterializedView(_, _) => {
                         'ifnull: {
-                            let mut cursor_ref = must_be_btree_cursor!(
+                            let cursor_ref = must_be_btree_cursor!(
                                 *cursor_id,
                                 program.cursor_ref,
                                 state,
@@ -1517,7 +1516,6 @@ pub fn op_column(
                             let cursor = cursor_ref.as_btree_mut();
 
                             if cursor.get_null_flag() {
-                                drop(cursor_ref);
                                 state.registers[*dest] = Register::Value(Value::Null);
                                 break 'outer;
                             }
@@ -1615,7 +1613,6 @@ pub fn op_column(
                             let serial_type = record_cursor.serial_types[target_column];
                             drop(record_result);
                             drop(record_cursor);
-                            drop(cursor_ref);
 
                             match serial_type {
                                 // NULL
@@ -1754,7 +1751,7 @@ pub fn op_column(
                     }
                     CursorType::Sorter => {
                         let record = {
-                            let mut cursor = state.get_cursor(*cursor_id);
+                            let cursor = state.get_cursor(*cursor_id);
                             let cursor = cursor.as_sorter_mut();
                             cursor.record().cloned()
                         };
@@ -1770,7 +1767,7 @@ pub fn op_column(
                     }
                     CursorType::Pseudo(_) => {
                         let value = {
-                            let mut cursor = state.get_cursor(*cursor_id);
+                            let cursor = state.get_cursor(*cursor_id);
                             let cursor = cursor.as_pseudo_mut();
                             if let Some(record) = cursor.record() {
                                 record.get_value(*column)?.to_owned()
@@ -1909,8 +1906,8 @@ pub fn op_next(
     );
     assert!(pc_if_next.is_offset());
     let is_empty = {
-        let mut cursor = state.get_cursor(*cursor_id);
-        match &mut *cursor {
+        let cursor = state.get_cursor(*cursor_id);
+        match cursor {
             Cursor::BTree(btree_cursor) => {
                 btree_cursor.set_null_flag(false);
                 return_if_io!(btree_cursor.next());
@@ -1958,7 +1955,7 @@ pub fn op_prev(
     );
     assert!(pc_if_prev.is_offset());
     let is_empty = {
-        let mut cursor = must_be_btree_cursor!(*cursor_id, program.cursor_ref, state, "Prev");
+        let cursor = must_be_btree_cursor!(*cursor_id, program.cursor_ref, state, "Prev");
         let cursor = cursor.as_btree_mut();
         cursor.set_null_flag(false);
         return_if_io!(cursor.prev());
@@ -2410,8 +2407,7 @@ pub fn op_row_data(
     load_insn!(RowData { cursor_id, dest }, insn);
 
     let record = {
-        let mut cursor_ref =
-            must_be_btree_cursor!(*cursor_id, program.cursor_ref, state, "RowData");
+        let cursor_ref = must_be_btree_cursor!(*cursor_id, program.cursor_ref, state, "RowData");
         let cursor = cursor_ref.as_btree_mut();
         let record_option = return_if_io!(cursor.record());
 
@@ -2470,7 +2466,7 @@ pub fn op_row_id(
                 table_cursor_id,
             } => {
                 let rowid = {
-                    let mut index_cursor = state.get_cursor(index_cursor_id);
+                    let index_cursor = state.get_cursor(index_cursor_id);
                     let index_cursor = index_cursor.as_btree_mut();
                     let record = return_if_io!(index_cursor.record());
                     let record = record.as_ref().unwrap();
@@ -2492,7 +2488,7 @@ pub fn op_row_id(
                 table_cursor_id,
             } => {
                 {
-                    let mut table_cursor = state.get_cursor(table_cursor_id);
+                    let table_cursor = state.get_cursor(table_cursor_id);
                     let table_cursor = table_cursor.as_btree_mut();
                     return_if_io!(
                         table_cursor.seek(SeekKey::TableRowId(rowid), SeekOp::GE { eq_only: true })
@@ -2501,7 +2497,7 @@ pub fn op_row_id(
                 state.op_row_id_state = OpRowIdState::GetRowid;
             }
             OpRowIdState::GetRowid => {
-                let mut cursors = state.cursors.borrow_mut();
+                let cursors = &mut state.cursors;
                 if let Some(Cursor::BTree(btree_cursor)) = cursors.get_mut(*cursor_id).unwrap() {
                     if let Some(ref rowid) = return_if_io!(btree_cursor.rowid()) {
                         state.registers[*dest] = Register::Value(Value::Integer(*rowid));
@@ -2549,7 +2545,7 @@ pub fn op_idx_row_id(
     mv_store: Option<&Arc<MvStore>>,
 ) -> Result<InsnFunctionStepResult> {
     load_insn!(IdxRowId { cursor_id, dest }, insn);
-    let mut cursors = state.cursors.borrow_mut();
+    let cursors = &mut state.cursors;
     let cursor = cursors.get_mut(*cursor_id).unwrap().as_mut().unwrap();
     let cursor = cursor.as_btree_mut();
     let rowid = return_if_io!(cursor.rowid());
@@ -2578,10 +2574,10 @@ pub fn op_seek_rowid(
     );
     assert!(target_pc.is_offset());
     let (pc, did_seek) = {
-        let mut cursor = state.get_cursor(*cursor_id);
+        let cursor = get_cursor!(state, *cursor_id);
 
         // Handle MaterializedView cursor
-        let (pc, did_seek) = match &mut *cursor {
+        let (pc, did_seek) = match cursor {
             Cursor::MaterializedView(mv_cursor) => {
                 let rowid = match state.registers[*src_reg].get_value() {
                     Value::Integer(rowid) => Some(*rowid),
@@ -2785,7 +2781,7 @@ pub enum SeekInternalResult {
     NotFound,
     IO(IOCompletions),
 }
-#[derive(Clone)]
+#[derive(Clone, Copy)]
 pub enum RecordSource {
     Unpacked { start_reg: usize, num_regs: usize },
     Packed { record_reg: usize },
@@ -2935,7 +2931,7 @@ pub fn seek_internal(
                 }
                 OpSeekState::Seek { key, op } => {
                     let seek_result = {
-                        let mut cursor = state.get_cursor(cursor_id);
+                        let cursor = get_cursor!(state, cursor_id);
                         let cursor = cursor.as_btree_mut();
                         let seek_key = match key {
                         OpSeekKey::TableRowId(rowid) => SeekKey::TableRowId(*rowid),
@@ -2968,7 +2964,7 @@ pub fn seek_internal(
                 }
                 OpSeekState::Advance { op } => {
                     let found = {
-                        let mut cursor = state.get_cursor(cursor_id);
+                        let cursor = get_cursor!(state, cursor_id);
                         let cursor = cursor.as_btree_mut();
                         // Seek operation has anchor number which equals to the closed boundary of the range
                         // (e.g. for >= x - anchor is x, for > x - anchor is x + 1)
@@ -3005,7 +3001,7 @@ pub fn seek_internal(
                     });
                 }
                 OpSeekState::MoveLast => {
-                    let mut cursor = state.get_cursor(cursor_id);
+                    let cursor = state.get_cursor(cursor_id);
                     let cursor = cursor.as_btree_mut();
                     match cursor.last()? {
                         IOResult::Done(()) => {}
@@ -3096,7 +3092,7 @@ pub fn op_idx_ge(
     assert!(target_pc.is_offset());
 
     let pc = {
-        let mut cursor = state.get_cursor(*cursor_id);
+        let cursor = get_cursor!(state, *cursor_id);
         let cursor = cursor.as_btree_mut();
 
         let pc = if let Some(idx_record) = return_if_io!(cursor.record()) {
@@ -3137,7 +3133,7 @@ pub fn op_seek_end(
 ) -> Result<InsnFunctionStepResult> {
     load_insn!(SeekEnd { cursor_id }, *insn);
     {
-        let mut cursor = state.get_cursor(cursor_id);
+        let cursor = state.get_cursor(cursor_id);
         let cursor = cursor.as_btree_mut();
         return_if_io!(cursor.seek_end());
     }
@@ -3165,7 +3161,7 @@ pub fn op_idx_le(
     assert!(target_pc.is_offset());
 
     let pc = {
-        let mut cursor = state.get_cursor(*cursor_id);
+        let cursor = get_cursor!(state, *cursor_id);
         let cursor = cursor.as_btree_mut();
 
         let pc = if let Some(idx_record) = return_if_io!(cursor.record()) {
@@ -3216,7 +3212,7 @@ pub fn op_idx_gt(
     assert!(target_pc.is_offset());
 
     let pc = {
-        let mut cursor = state.get_cursor(*cursor_id);
+        let cursor = get_cursor!(state, *cursor_id);
         let cursor = cursor.as_btree_mut();
 
         let pc = if let Some(idx_record) = return_if_io!(cursor.record()) {
@@ -3267,7 +3263,7 @@ pub fn op_idx_lt(
     assert!(target_pc.is_offset());
 
     let pc = {
-        let mut cursor = state.get_cursor(*cursor_id);
+        let cursor = get_cursor!(state, *cursor_id);
         let cursor = cursor.as_btree_mut();
 
         let pc = if let Some(idx_record) = return_if_io!(cursor.record()) {
@@ -3844,7 +3840,7 @@ pub fn op_sorter_open(
         page_size,
         pager.io.clone(),
     );
-    let mut cursors = state.cursors.borrow_mut();
+    let cursors = &mut state.cursors;
     cursors
         .get_mut(*cursor_id)
         .unwrap()
@@ -3869,7 +3865,7 @@ pub fn op_sorter_data(
         insn
     );
     let record = {
-        let mut cursor = state.get_cursor(*cursor_id);
+        let cursor = state.get_cursor(*cursor_id);
         let cursor = cursor.as_sorter_mut();
         cursor.record().cloned()
     };
@@ -3882,7 +3878,7 @@ pub fn op_sorter_data(
     };
     state.registers[*dest_reg] = Register::Record(record.clone());
     {
-        let mut pseudo_cursor = state.get_cursor(*pseudo_cursor);
+        let pseudo_cursor = state.get_cursor(*pseudo_cursor);
         pseudo_cursor.as_pseudo_mut().insert(record);
     }
     state.pc += 1;
@@ -3904,7 +3900,7 @@ pub fn op_sorter_insert(
         insn
     );
     {
-        let mut cursor = state.get_cursor(*cursor_id);
+        let cursor = get_cursor!(state, *cursor_id);
         let cursor = cursor.as_sorter_mut();
         let record = match &state.registers[*record_reg] {
             Register::Record(record) => record,
@@ -3931,7 +3927,7 @@ pub fn op_sorter_sort(
         insn
     );
     let (is_empty, did_sort) = {
-        let mut cursor = state.get_cursor(*cursor_id);
+        let cursor = state.get_cursor(*cursor_id);
         let cursor = cursor.as_sorter_mut();
         let is_empty = cursor.is_empty();
         if !is_empty {
@@ -3967,7 +3963,7 @@ pub fn op_sorter_next(
     );
     assert!(pc_if_next.is_offset());
     let has_more = {
-        let mut cursor = state.get_cursor(*cursor_id);
+        let cursor = state.get_cursor(*cursor_id);
         let cursor = cursor.as_sorter_mut();
         return_if_io!(cursor.next());
         cursor.has_more()
@@ -5317,7 +5313,7 @@ pub fn op_insert(
                 turso_assert!(!flag.has(InsertFlags::REQUIRE_SEEK), "to capture old record accurately, we must be located at the correct position in the table");
 
                 let old_record = {
-                    let mut cursor = state.get_cursor(*cursor_id);
+                    let cursor = state.get_cursor(*cursor_id);
                     let cursor = cursor.as_btree_mut();
                     // Get the current key - for INSERT operations, there may not be a current row
                     let maybe_key = return_if_io!(cursor.rowid());
@@ -5393,7 +5389,7 @@ pub fn op_insert(
                 };
 
                 {
-                    let mut cursor = state.get_cursor(*cursor_id);
+                    let cursor = get_cursor!(state, *cursor_id);
                     let cursor = cursor.as_btree_mut();
 
                     return_if_io!(cursor.insert(&BTreeKey::new_table_rowid(key, Some(&record))));
@@ -5403,7 +5399,7 @@ pub fn op_insert(
 
                 // Only update last_insert_rowid for regular table inserts, not schema modifications
                 let root_page = {
-                    let mut cursor = state.get_cursor(*cursor_id);
+                    let cursor = state.get_cursor(*cursor_id);
                     let cursor = cursor.as_btree_mut();
                     cursor.root_page()
                 };
@@ -5421,7 +5417,7 @@ pub fn op_insert(
             }
             OpInsertSubState::UpdateLastRowid => {
                 let maybe_rowid = {
-                    let mut cursor = state.get_cursor(*cursor_id);
+                    let cursor = state.get_cursor(*cursor_id);
                     let cursor = cursor.as_btree_mut();
                     return_if_io!(cursor.rowid())
                 };
@@ -5445,7 +5441,7 @@ pub fn op_insert(
                 assert!(!dependent_views.is_empty());
 
                 let (key, values) = {
-                    let mut cursor = state.get_cursor(*cursor_id);
+                    let cursor = state.get_cursor(*cursor_id);
                     let cursor = cursor.as_btree_mut();
 
                     let key = match &state.registers[*key_reg].get_value() {
@@ -5576,7 +5572,7 @@ pub fn op_delete(
                 }
 
                 let deleted_record = {
-                    let mut cursor = state.get_cursor(*cursor_id);
+                    let cursor = state.get_cursor(*cursor_id);
                     let cursor = cursor.as_btree_mut();
                     // Get the current key
                     let maybe_key = return_if_io!(cursor.rowid());
@@ -5611,7 +5607,7 @@ pub fn op_delete(
             }
             OpDeleteSubState::Delete => {
                 {
-                    let mut cursor = state.get_cursor(*cursor_id);
+                    let cursor = state.get_cursor(*cursor_id);
                     let cursor = cursor.as_btree_mut();
                     return_if_io!(cursor.delete());
                 }
@@ -5721,7 +5717,7 @@ pub fn op_idx_delete(
             }
             Some(OpIdxDeleteState::Verifying) => {
                 let rowid = {
-                    let mut cursor = state.get_cursor(*cursor_id);
+                    let cursor = state.get_cursor(*cursor_id);
                     let cursor = cursor.as_btree_mut();
                     return_if_io!(cursor.rowid())
                 };
@@ -5736,7 +5732,7 @@ pub fn op_idx_delete(
             }
             Some(OpIdxDeleteState::Deleting) => {
                 {
-                    let mut cursor = state.get_cursor(*cursor_id);
+                    let cursor = state.get_cursor(*cursor_id);
                     let cursor = cursor.as_btree_mut();
                     return_if_io!(cursor.delete());
                 }
@@ -5832,7 +5828,7 @@ pub fn op_idx_insert(
         }
         OpIdxInsertState::UniqueConstraintCheck => {
             let ignore_conflict = 'i: {
-                let mut cursor = state.get_cursor(cursor_id);
+                let cursor = get_cursor!(state, cursor_id);
                 let cursor = cursor.as_btree_mut();
                 let record_opt = return_if_io!(cursor.record());
                 let Some(record) = record_opt.as_ref() else {
@@ -5878,7 +5874,7 @@ pub fn op_idx_insert(
         }
         OpIdxInsertState::Insert => {
             {
-                let mut cursor = state.get_cursor(cursor_id);
+                let cursor = get_cursor!(state, cursor_id);
                 let cursor = cursor.as_btree_mut();
                 return_if_io!(cursor.insert(&BTreeKey::new_index_key(record_to_insert)));
             }
@@ -5893,7 +5889,7 @@ pub fn op_idx_insert(
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone, Copy)]
 pub enum OpNewRowidState {
     Start,
     SeekingToLast,
@@ -5929,7 +5925,7 @@ pub fn op_new_rowid(
 
     if let Some(mv_store) = mv_store {
         let rowid = {
-            let mut cursor = state.get_cursor(*cursor);
+            let cursor = state.get_cursor(*cursor);
             let cursor = cursor.as_btree_mut();
             let mvcc_cursor = cursor.get_mvcc_cursor();
             let mut mvcc_cursor = RefCell::borrow_mut(&mvcc_cursor);
@@ -5944,14 +5940,14 @@ pub fn op_new_rowid(
     const MAX_ATTEMPTS: u32 = 100;
 
     loop {
-        match &state.op_new_rowid_state {
+        match state.op_new_rowid_state {
             OpNewRowidState::Start => {
                 state.op_new_rowid_state = OpNewRowidState::SeekingToLast;
             }
 
             OpNewRowidState::SeekingToLast => {
                 {
-                    let mut cursor = state.get_cursor(*cursor);
+                    let cursor = state.get_cursor(*cursor);
                     let cursor = cursor.as_btree_mut();
                     return_if_io!(cursor.seek_to_last());
                 }
@@ -5960,7 +5956,7 @@ pub fn op_new_rowid(
 
             OpNewRowidState::ReadingMaxRowid => {
                 let current_max = {
-                    let mut cursor = state.get_cursor(*cursor);
+                    let cursor = state.get_cursor(*cursor);
                     let cursor = cursor.as_btree_mut();
                     return_if_io!(cursor.rowid())
                 };
@@ -5987,7 +5983,7 @@ pub fn op_new_rowid(
             }
 
             OpNewRowidState::GeneratingRandom { attempts } => {
-                if *attempts >= MAX_ATTEMPTS {
+                if attempts >= MAX_ATTEMPTS {
                     return Err(LimboError::DatabaseFull("Unable to find an unused rowid after 100 attempts - database is probably full".to_string()));
                 }
 
@@ -6000,7 +5996,7 @@ pub fn op_new_rowid(
                 random_rowid += 1; // Ensure positive
 
                 state.op_new_rowid_state = OpNewRowidState::VerifyingCandidate {
-                    attempts: *attempts,
+                    attempts,
                     candidate: random_rowid,
                 };
             }
@@ -6010,18 +6006,17 @@ pub fn op_new_rowid(
                 candidate,
             } => {
                 let exists = {
-                    let mut cursor = state.get_cursor(*cursor);
+                    let cursor = state.get_cursor(*cursor);
                     let cursor = cursor.as_btree_mut();
-                    let seek_result = return_if_io!(cursor.seek(
-                        SeekKey::TableRowId(*candidate),
-                        SeekOp::GE { eq_only: true }
-                    ));
+                    let seek_result =
+                        return_if_io!(cursor
+                            .seek(SeekKey::TableRowId(candidate), SeekOp::GE { eq_only: true }));
                     matches!(seek_result, SeekResult::Found)
                 };
 
                 if !exists {
                     // Found unused rowid!
-                    state.registers[*rowid_reg] = Register::Value(Value::Integer(*candidate));
+                    state.registers[*rowid_reg] = Register::Value(Value::Integer(candidate));
                     state.op_new_rowid_state = OpNewRowidState::Start;
                     state.pc += 1;
                     return Ok(InsnFunctionStepResult::Step);
@@ -6034,7 +6029,7 @@ pub fn op_new_rowid(
             }
             OpNewRowidState::GoNext => {
                 {
-                    let mut cursor = state.get_cursor(*cursor);
+                    let cursor = state.get_cursor(*cursor);
                     let cursor = cursor.as_btree_mut();
                     return_if_io!(cursor.next());
                 }
@@ -6092,6 +6087,7 @@ pub fn op_soft_null(
     Ok(InsnFunctionStepResult::Step)
 }
 
+#[derive(Clone, Copy)]
 pub enum OpNoConflictState {
     Start,
     Seeking(RecordSource),
@@ -6117,9 +6113,9 @@ pub fn op_no_conflict(
     );
 
     loop {
-        match &state.op_no_conflict_state {
+        match state.op_no_conflict_state {
             OpNoConflictState::Start => {
-                let mut cursor_ref = state.get_cursor(*cursor_id);
+                let cursor_ref = state.get_cursor(*cursor_id);
                 let cursor = cursor_ref.as_btree_mut();
 
                 let record_source = if *num_regs == 0 {
@@ -6157,8 +6153,6 @@ pub fn op_no_conflict(
                     }),
                 };
 
-                drop(cursor_ref);
-
                 if contains_nulls {
                     state.pc = target_pc.as_offset_int();
                     state.op_no_conflict_state = OpNoConflictState::Start;
@@ -6173,7 +6167,7 @@ pub fn op_no_conflict(
                     state,
                     pager,
                     mv_store,
-                    record_source.clone(),
+                    record_source,
                     *cursor_id,
                     true,
                     SeekOp::GE { eq_only: true },
@@ -6211,12 +6205,12 @@ pub fn op_not_exists(
         insn
     );
     let exists = if let Some(mv_store) = mv_store {
-        let mut cursor = must_be_btree_cursor!(*cursor, program.cursor_ref, state, "NotExists");
+        let cursor = must_be_btree_cursor!(*cursor, program.cursor_ref, state, "NotExists");
         let cursor = cursor.as_btree_mut();
         let mvcc_cursor = cursor.get_mvcc_cursor();
         false
     } else {
-        let mut cursor = must_be_btree_cursor!(*cursor, program.cursor_ref, state, "NotExists");
+        let cursor = must_be_btree_cursor!(*cursor, program.cursor_ref, state, "NotExists");
         let cursor = cursor.as_btree_mut();
         return_if_io!(cursor.exists(state.registers[*rowid_reg].get_value()))
     };
@@ -6305,7 +6299,7 @@ pub fn op_open_write(
         },
     };
     let (_, cursor_type) = program.cursor_ref.get(*cursor_id).unwrap();
-    let mut cursors = state.cursors.borrow_mut();
+    let cursors = &mut state.cursors;
     let maybe_index = match cursor_type {
         CursorType::BTreeIndex(index) => Some(index),
         _ => None,
@@ -6486,7 +6480,7 @@ pub fn op_close(
     mv_store: Option<&Arc<MvStore>>,
 ) -> Result<InsnFunctionStepResult> {
     load_insn!(Close { cursor_id }, insn);
-    let mut cursors = state.cursors.borrow_mut();
+    let cursors = &mut state.cursors;
     cursors.get_mut(*cursor_id).unwrap().take();
     state.pc += 1;
     Ok(InsnFunctionStepResult::Step)
@@ -6626,7 +6620,7 @@ pub fn op_populate_materialized_views(
     // For each view, get its cursor and root page
     let mut view_info = Vec::new();
     {
-        let cursors_ref = state.cursors.borrow();
+        let cursors_ref = &state.cursors;
         for (view_name, cursor_id) in cursors {
             // Get the cursor to find the root page
             let cursor = cursors_ref
@@ -6659,7 +6653,7 @@ pub fn op_populate_materialized_views(
 
             // Get the cursor for writing
             // Get a mutable reference to the cursor
-            let mut cursors_ref = state.cursors.borrow_mut();
+            let cursors_ref = &mut state.cursors;
             let cursor = cursors_ref
                 .get_mut(cursor_id)
                 .and_then(|c| c.as_mut())
@@ -7074,8 +7068,7 @@ pub fn op_open_ephemeral(
         OpOpenEphemeralState::Rewind { cursor } => {
             return_if_io!(cursor.rewind());
 
-            let mut cursors: std::cell::RefMut<'_, Vec<Option<Cursor>>> =
-                state.cursors.borrow_mut();
+            let cursors = &mut state.cursors;
 
             let (_, cursor_type) = program.cursor_ref.get(cursor_id).unwrap();
 
@@ -7262,7 +7255,7 @@ pub fn op_count(
     );
 
     let count = {
-        let mut cursor = must_be_btree_cursor!(*cursor_id, program.cursor_ref, state, "Count");
+        let cursor = must_be_btree_cursor!(*cursor_id, program.cursor_ref, state, "Count");
         let cursor = cursor.as_btree_mut();
         return_if_io!(cursor.count())
     };
