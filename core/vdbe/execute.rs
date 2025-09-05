@@ -7236,7 +7236,7 @@ pub fn op_affinity(
     for (i, affinity_char) in affinities.chars().enumerate().take(count.get()) {
         let reg_index = *start_reg + i;
 
-        let affinity = Affinity::from_char(affinity_char)?;
+        let affinity = Affinity::from_char(affinity_char);
 
         apply_affinity_char(&mut state.registers[reg_index], affinity);
     }

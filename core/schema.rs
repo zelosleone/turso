@@ -1306,16 +1306,14 @@ impl Affinity {
         }
     }
 
-    pub fn from_char(char: char) -> Result<Self> {
+    pub fn from_char(char: char) -> Self {
         match char {
-            SQLITE_AFF_INTEGER => Ok(Affinity::Integer),
-            SQLITE_AFF_TEXT => Ok(Affinity::Text),
-            SQLITE_AFF_NONE => Ok(Affinity::Blob),
-            SQLITE_AFF_REAL => Ok(Affinity::Real),
-            SQLITE_AFF_NUMERIC => Ok(Affinity::Numeric),
-            _ => Err(LimboError::InternalError(format!(
-                "Invalid affinity character: {char}"
-            ))),
+            SQLITE_AFF_INTEGER => Affinity::Integer,
+            SQLITE_AFF_TEXT => Affinity::Text,
+            SQLITE_AFF_NONE => Affinity::Blob,
+            SQLITE_AFF_REAL => Affinity::Real,
+            SQLITE_AFF_NUMERIC => Affinity::Numeric,
+            _ => Affinity::Blob,
         }
     }
 
@@ -1323,7 +1321,7 @@ impl Affinity {
         self.aff_mask() as u8
     }
 
-    pub fn from_char_code(code: u8) -> Result<Self, LimboError> {
+    pub fn from_char_code(code: u8) -> Self {
         Self::from_char(code as char)
     }
 

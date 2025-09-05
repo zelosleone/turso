@@ -52,7 +52,7 @@ impl CmpInsFlags {
 
     pub fn get_affinity(&self) -> Affinity {
         let aff_code = (self.0 & Self::AFFINITY_MASK) as u8;
-        Affinity::from_char_code(aff_code).unwrap_or(Affinity::Blob)
+        Affinity::from_char_code(aff_code)
     }
 }
 
