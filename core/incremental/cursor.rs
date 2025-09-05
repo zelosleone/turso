@@ -198,13 +198,13 @@ impl MaterializedViewCursor {
                     let min_seen = btree_entries
                         .changes
                         .first()
-                        .expect("canot be empty, we just tested for it")
+                        .expect("cannot be empty, we just tested for it")
                         .0
                         .rowid;
                     let max_seen = btree_entries
                         .changes
                         .last()
-                        .expect("canot be empty, we just tested for it")
+                        .expect("cannot be empty, we just tested for it")
                         .0
                         .rowid;
 
