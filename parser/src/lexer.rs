@@ -1525,7 +1525,7 @@ mod tests {
             ),
             // issue 2933
             (
-                b"u.name".as_slice(),
+                b"u.emai".as_slice(),
                 vec![
                     Token {
                         value: b"u".as_slice(),
@@ -1536,7 +1536,7 @@ mod tests {
                         token_type: Some(TokenType::TK_DOT),
                     },
                     Token {
-                        value: b"name".as_slice(),
+                        value: b"email".as_slice(),
                         token_type: Some(TokenType::TK_ID),
                     },
                 ],
