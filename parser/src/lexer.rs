@@ -590,7 +590,7 @@ impl<'a> Lexer<'a> {
         self.eat_and_assert(|b| b == b'.');
 
         match self.peek() {
-            Some(b) if b.is_ascii_digit() => {
+            Some(b) if b.is_ascii_digit() || b.eq_ignore_ascii_case(&b'e') => {
                 self.eat_while_number_digit()?;
                 match self.peek() {
                     Some(b'e') | Some(b'E') => {
@@ -1237,6 +1237,14 @@ mod tests {
                 Token {
                     value: b"wHeRe_123".as_slice(), // 'X' is not included in the value
                     token_type: Some(TokenType::TK_ID),
+                },
+            ),
+            // issue 2933
+            (
+                b"1.e5".as_slice(),
+                Token {
+                    value: b"1.e5".as_slice(), // 'X' is not included in the value
+                    token_type: Some(TokenType::TK_FLOAT),
                 },
             ),
         ];
