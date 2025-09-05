@@ -1525,7 +1525,7 @@ mod tests {
             ),
             // issue 2933
             (
-                b"u.emai".as_slice(),
+                b"u.email".as_slice(),
                 vec![
                     Token {
                         value: b"u".as_slice(),
