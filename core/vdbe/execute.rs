@@ -5487,7 +5487,6 @@ pub fn op_insert(
                     (key, new_values)
                 };
 
-
                 if let Some((key, values)) = state.op_insert_state.old_record.take() {
                     for view_name in dependent_views.iter() {
                         let tx_state = program
