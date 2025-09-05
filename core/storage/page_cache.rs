@@ -18,16 +18,8 @@ pub struct PageCacheKey(usize);
 
 const NULL: usize = usize::MAX;
 
-#[derive(Clone, Copy, Debug)]
-/// To distinguish between a page touched by a scan vs a 'hot' page,
-/// we use a Reference Bit with 4 states, incrementing this bit up to a maximum
-/// of 3 on each access, and decrementing on each eviction scan pass.
-enum RefBit {
-    Clear,
-    Min,
-    Med,
-    Max,
-}
+const CLEAR: u8 = 0;
+const REF_MAX: u8 = 3;
 
 #[derive(Clone, Debug)]
 struct PageCacheEntry {
@@ -36,10 +28,10 @@ struct PageCacheEntry {
     /// The cached page, None if this slot is free
     page: Option<PageRef>,
     /// Reference bit for SIEVE algorithm - set on access, cleared during eviction scan
-    ref_bit: Cell<RefBit>,
-    /// Index of next entry in SIEVE queue (newer/toward head)
+    ref_bit: Cell<u8>,
+    /// Index of next entry in SIEVE queue (older/toward tail)
     next: Cell<usize>,
-    /// Index of previous entry in SIEVE queue (older/toward tail)
+    /// Index of previous entry in SIEVE queue (newer/toward head)
     prev: Cell<usize>,
 }
 
@@ -48,7 +40,7 @@ impl Default for PageCacheEntry {
         Self {
             key: PageCacheKey(0),
             page: None,
-            ref_bit: Cell::new(RefBit::Clear),
+            ref_bit: Cell::new(CLEAR),
             next: Cell::new(NULL),
             prev: Cell::new(NULL),
         }
@@ -58,28 +50,20 @@ impl Default for PageCacheEntry {
 impl PageCacheEntry {
     #[inline]
     fn bump_ref(&self) {
-        self.ref_bit.set(match self.ref_bit.get() {
-            RefBit::Clear => RefBit::Min,
-            RefBit::Min => RefBit::Med,
-            _ => RefBit::Max,
-        });
+        self.ref_bit
+            .set(std::cmp::min(self.ref_bit.get() + 1, REF_MAX));
     }
 
     #[inline]
     /// Returns the old value
-    fn decrement_ref(&self) -> RefBit {
+    fn decrement_ref(&self) -> u8 {
         let old = self.ref_bit.get();
-        let new = match old {
-            RefBit::Max => RefBit::Med,
-            RefBit::Med => RefBit::Min,
-            _ => RefBit::Clear,
-        };
-        self.ref_bit.set(new);
+        self.ref_bit.set(old.saturating_sub(1));
         old
     }
     #[inline]
     fn clear_ref(&self) {
-        self.ref_bit.set(RefBit::Clear);
+        self.ref_bit.set(CLEAR);
     }
     #[inline]
     fn empty() -> Self {
@@ -182,6 +166,10 @@ impl PageCache {
             self.entries[old_head].prev.set(slot);
         } else {
             // List was empty, this is now both head and tail
+            turso_assert!(
+                self.tail.get() == NULL,
+                "tail must be NULL if head was NULL"
+            );
             self.tail.set(slot);
         }
         // If hand was NULL/list was empty, set it to the new element
@@ -192,20 +180,19 @@ impl PageCache {
 
     #[inline]
     fn unlink(&self, slot: usize) {
-        let p = self.entries[slot].prev.get();
-        let n = self.entries[slot].next.get();
+        let prev = self.entries[slot].prev.get();
+        let next = self.entries[slot].next.get();
 
-        if p != NULL {
-            self.entries[p].next.set(n);
+        if prev != NULL {
+            self.entries[prev].next.set(next);
         } else {
-            self.head.set(n);
+            self.head.set(next);
         }
-        if n != NULL {
-            self.entries[n].prev.set(p);
+        if next != NULL {
+            self.entries[next].prev.set(prev);
         } else {
-            self.tail.set(p);
+            self.tail.set(prev);
         }
-
         self.entries[slot].reset_links();
     }
 
@@ -230,7 +217,7 @@ impl PageCache {
         update_in_place: bool,
     ) -> Result<(), CacheError> {
         trace!("insert(key={:?})", key);
-        let slot = { self.map.get(&key) };
+        let slot = self.map.get(&key);
         if let Some(slot) = slot {
             let p = self.entries[slot]
                 .page
@@ -289,8 +276,11 @@ impl PageCache {
                 slot
             );
         }
-        // Reset linkage on entry itself
-        self.entries[slot].reset_links();
+        turso_assert!(
+            self.entries[slot].next.get() == NULL && self.entries[slot].prev.get() == NULL,
+            "freelist slot {} has non-NULL links",
+            slot
+        );
         Ok(slot)
     }
 
@@ -330,6 +320,16 @@ impl PageCache {
             let _ = entry.get().contents.take();
         }
 
+        let next = self.entries[slot_idx].next.get();
+        let prev = self.entries[slot_idx].prev.get();
+        if self.clock_hand.get() == slot_idx {
+            self.clock_hand.set(match (prev, next) {
+                // prefer forward progress when possible
+                (_, n) if n != NULL => n,
+                (p, _) if p != NULL => p,
+                _ => NULL, // sole element
+            });
+        }
         self.unlink(slot_idx);
         self.map.remove(&key);
         let entry = &mut self.entries[slot_idx];
@@ -357,7 +357,6 @@ impl PageCache {
         // assertions later on. This is worsened by the fact that page cache is not per `Statement`, so you can abort a completion
         // in one Statement, and trigger some error in the next one if we don't evict the page here.
         let entry = &self.entries[slot];
-        entry.bump_ref();
         let page = entry
             .page
             .as_ref()
@@ -365,10 +364,10 @@ impl PageCache {
             .clone();
         if !page.is_loaded() && !page.is_locked() {
             self.delete(*key)?;
-            Ok(None)
-        } else {
-            Ok(Some(page))
+            return Ok(None);
         }
+        entry.bump_ref();
+        Ok(Some(page))
     }
 
     #[inline]
@@ -408,7 +407,7 @@ impl PageCache {
         struct Payload {
             key: PageCacheKey,
             page: PageRef,
-            ref_bit: RefBit,
+            ref_bit: u8,
         }
         let survivors: Vec<Payload> = {
             let entries = &self.entries;
@@ -457,84 +456,84 @@ impl PageCache {
         for i in (used..new_cap).rev() {
             fl.push(i);
         }
-
+        self.clock_hand.set(self.tail.get());
         CacheResizeResult::Done
     }
 
     /// Ensures at least `n` free slots are available
     ///
     /// Uses the SIEVE algorithm to evict pages if necessary:
-    /// 1. Start at tail (LRU position)
-    /// 2. If page is marked, decrement mark and move to head
-    /// 3. If page mark was already Cleared, evict it
-    /// 4. If page is unevictable (dirty/locked/pinned), move to head
+    /// Start at tail (LRU position)
+    /// If page is marked, decrement mark
+    /// If page mark was already Cleared, evict it
+    /// If page is unevictable (dirty/locked/pinned), continue sweep
     ///
     /// Returns `CacheError::Full` if not enough pages can be evicted
     pub fn make_room_for(&mut self, n: usize) -> Result<(), CacheError> {
         if n > self.capacity {
             return Err(CacheError::Full);
         }
-
         let available = self.capacity.saturating_sub(self.len());
         if n <= available {
             return Ok(());
         }
 
+        const MAX_REF: usize = 3;
         let mut need = n - available;
-        let mut examined = 0;
-        // Max ref bit value + 1
-        let max_examinations = self.len() * 4;
+        let mut examined = 0usize;
+        let max_examinations = self.len().saturating_mul(MAX_REF + 1);
 
-        // Start from where we left off, or from tail if hand is invalid
+        // start where the hand left off, else from tail
         let mut current = self.clock_hand.get();
-        if current == NULL || self.entries[current].page.is_none() {
+        if current == NULL || current >= self.capacity || self.entries[current].page.is_none() {
             current = self.tail.get();
         }
-        let start_position = current;
-        let mut wrapped = false;
+
         while need > 0 && examined < max_examinations {
             if current == NULL {
                 break;
             }
-            let entry = &self.entries[current];
-            let next = entry.next.get();
-
-            if let Some(ref page) = entry.page {
-                if !page.is_dirty() && !page.is_locked() && !page.is_pinned() {
-                    if matches!(entry.ref_bit.get(), RefBit::Clear) {
-                        // Evict this page
-                        let key = entry.key;
-                        self.clock_hand
-                            .set(if next != NULL { next } else { self.tail.get() });
-                        self._delete(key, true)?;
-                        need -= 1;
-                        examined = 0;
-                        // After deletion, current is invalid, use hand
-                        current = self.clock_hand.get();
-                        continue;
-                    } else {
-                        // Decrement and continue
-                        entry.decrement_ref();
+            let forward = self.entries[current].prev.get();
+            let evictable_and_clear = {
+                let e = &self.entries[current];
+                if let Some(ref p) = e.page {
+                    if p.is_dirty() || p.is_locked() || p.is_pinned() {
                         examined += 1;
+                        false
+                    } else {
+                        match e.ref_bit.get() {
+                            CLEAR => true,
+                            _ => {
+                                e.decrement_ref(); // second chance
+                                examined += 1;
+                                false
+                            }
+                        }
                     }
                 } else {
                     examined += 1;
+                    false
                 }
-            }
-            // Move to next
-            if next != NULL {
-                current = next;
-            } else if !wrapped {
-                // Wrap around to tail once
-                current = self.tail.get();
-                wrapped = true;
+            };
+
+            if evictable_and_clear {
+                let key = self.entries[current].key;
+                // hand moves forward, if we were at head (forward == NULL), wrap to tail
+                self.clock_hand.set(if forward != NULL {
+                    forward
+                } else {
+                    self.tail.get()
+                });
+                self._delete(key, true)?;
+                need -= 1;
+                examined = 0;
+                current = self.clock_hand.get();
             } else {
-                // We've wrapped and hit the end again
-                break;
-            }
-            // Stop if we've come full circle
-            if wrapped && current == start_position {
-                break;
+                current = if forward != NULL {
+                    forward
+                } else {
+                    self.tail.get()
+                };
             }
         }
         self.clock_hand.set(current);
@@ -558,6 +557,7 @@ impl PageCache {
         self.map.clear();
         self.head.set(NULL);
         self.tail.set(NULL);
+        self.clock_hand.set(NULL);
         let fl = &mut self.freelist;
         fl.clear();
         for i in (0..self.capacity).rev() {
@@ -732,6 +732,15 @@ impl PageCache {
             cnt,
             self.capacity
         );
+
+        let hand = self.clock_hand.get();
+        if hand != NULL {
+            assert!(hand < self.capacity, "clock_hand out of bounds");
+            assert!(
+                entries[hand].page.is_some(),
+                "clock_hand points to empty slot"
+            );
+        }
     }
 
     #[cfg(test)]
@@ -739,7 +748,7 @@ impl PageCache {
         self.map.get(key)
     }
     #[cfg(test)]
-    fn ref_of(&self, key: &PageCacheKey) -> Option<RefBit> {
+    fn ref_of(&self, key: &PageCacheKey) -> Option<u8> {
         self.slot_of(key).map(|i| self.entries[i].ref_bit.get())
     }
 }
@@ -1119,23 +1128,15 @@ mod tests {
 
     #[test]
     fn test_sieve_second_chance_preserves_marked_tail() {
-        // SIEVE gives a "second chance" to marked pages at the tail
-        // by clearing their bit and moving them to head
-
         let mut cache = PageCache::new(3);
         let key1 = insert_page(&mut cache, 1);
         let key2 = insert_page(&mut cache, 2);
         let key3 = insert_page(&mut cache, 3);
         assert_eq!(cache.len(), 3);
 
-        // Mark the tail (key1) by accessing it
         assert!(cache.get(&key1).unwrap().is_some());
 
-        // Insert 4: SIEVE process:
-        // 1. Examines tail (key1, marked) -> clear bit, move to head
-        // 2. New tail is key2 (unmarked) -> evict key2
         let key4 = insert_page(&mut cache, 4);
-
         assert!(
             cache.get(&key1).unwrap().is_some(),
             "key1 had ref bit set, got second chance"
@@ -1605,6 +1606,37 @@ mod tests {
     }
 
     #[test]
+    fn clock_drains_hot_page_within_single_sweep_when_others_are_unevictable() {
+        // capacity 3: [3(head), 2, 1(tail)]
+        let mut c = PageCache::new(3);
+        let k1 = insert_page(&mut c, 1);
+        let k2 = insert_page(&mut c, 2);
+        let _k3 = insert_page(&mut c, 3);
+
+        // Make k1 hot: bump to Max
+        for _ in 0..3 {
+            assert!(c.get(&k1).unwrap().is_some());
+        }
+        assert!(matches!(c.ref_of(&k1), Some(REF_MAX)));
+
+        // Make other pages unevictable; clock must keep revisiting k1.
+        c.get(&k2).unwrap().unwrap().set_dirty();
+        c.get(&_k3).unwrap().unwrap().set_dirty();
+
+        // Insert 4 -> sweep rotates as needed, draining k1 and evicting it.
+        let _k4 = insert_page(&mut c, 4);
+
+        assert!(
+            c.get(&k1).unwrap().is_none(),
+            "k1 should be evicted after its credit drains"
+        );
+        assert!(c.get(&k2).unwrap().is_some(), "k2 is dirty (unevictable)");
+        assert!(c.get(&_k3).unwrap().is_some(), "k3 is dirty (unevictable)");
+        assert!(c.get(&_k4).unwrap().is_some(), "k4 just inserted");
+        c.verify_cache_integrity();
+    }
+
+    #[test]
     fn gclock_hot_survives_scan_pages() {
         let mut c = PageCache::new(4);
         let _k1 = insert_page(&mut c, 1);
@@ -1616,7 +1648,7 @@ mod tests {
         for _ in 0..3 {
             assert!(c.get(&k2).unwrap().is_some());
         }
-        assert!(matches!(c.ref_of(&k2), Some(RefBit::Max)));
+        assert!(matches!(c.ref_of(&k2), Some(REF_MAX)));
 
         // Now simulate a scan inserting new pages 5..10 (one-hit wonders).
         for id in 5..=10 {
@@ -1630,6 +1662,33 @@ mod tests {
         );
         // The earliest single-hit page should be gone.
         assert!(c.get(&create_key(5)).unwrap().is_none());
+        c.verify_cache_integrity();
+    }
+
+    #[test]
+    fn hand_stays_valid_after_deleting_only_element() {
+        let mut c = PageCache::new(2);
+        let k = insert_page(&mut c, 1);
+        assert!(c.delete(k).is_ok());
+        // Inserting again should not panic and should succeed
+        let _ = insert_page(&mut c, 2);
+        c.verify_cache_integrity();
+    }
+
+    #[test]
+    fn hand_is_reset_after_clear_and_resize() {
+        let mut c = PageCache::new(3);
+        for i in 1..=3 {
+            let _ = insert_page(&mut c, i);
+        }
+        c.clear().unwrap();
+        // No elements; insert should not rely on stale hand
+        let _ = insert_page(&mut c, 10);
+
+        // Resize from 1 -> 4 and back should not OOB the hand
+        assert_eq!(c.resize(4), CacheResizeResult::Done);
+        assert_eq!(c.resize(1), CacheResizeResult::Done);
+        let _ = insert_page(&mut c, 11);
         c.verify_cache_integrity();
     }
 
