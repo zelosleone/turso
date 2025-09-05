@@ -615,29 +615,29 @@ pub fn format_float(v: f64) -> String {
     let mut d = DoubleDouble(v.abs(), 0.0);
     let mut exp = 0;
 
-    if d.0 > 9.223372036854774784e+18 {
-        while d.0 > 9.223372036854774784e+118 {
+    if d.0 > 9.223_372_036_854_775e18 {
+        while d.0 > 9.223_372_036_854_774e118 {
             exp += 100;
             d *= DoubleDouble::NEG_E100;
         }
-        while d.0 > 9.223372036854774784e+28 {
+        while d.0 > 9.223_372_036_854_774e28 {
             exp += 10;
             d *= DoubleDouble::NEG_E10;
         }
-        while d.0 > 9.223372036854774784e+18 {
+        while d.0 > 9.223_372_036_854_775e18 {
             exp += 1;
             d *= DoubleDouble::NEG_E1;
         }
     } else {
-        while d.0 < 9.223372036854774784e-83 {
+        while d.0 < 9.223_372_036_854_775e-83 {
             exp -= 100;
             d *= DoubleDouble::E100;
         }
-        while d.0 < 9.223372036854774784e+07 {
+        while d.0 < 9.223_372_036_854_775e7 {
             exp -= 10;
             d *= DoubleDouble::E10;
         }
-        while d.0 < 9.22337203685477478e+17 {
+        while d.0 < 9.223_372_036_854_775e17 {
             exp -= 1;
             d *= DoubleDouble::E1;
         }
@@ -680,7 +680,7 @@ pub fn format_float(v: f64) -> String {
     if (-4..=14).contains(&exp) {
         format!(
             "{}{}.{}{}",
-            negative.then_some("-").unwrap_or_default(),
+            if negative { "-" } else { Default::default() },
             if decimal_pos > 0 {
                 let zeroes = (decimal_pos - digits.len() as i32).max(0) as usize;
                 let digits = digits
@@ -690,7 +690,7 @@ pub fn format_float(v: f64) -> String {
             } else {
                 "0".to_string()
             },
-            "0".repeat(decimal_pos.min(0).abs() as usize),
+            "0".repeat(decimal_pos.min(0).unsigned_abs() as usize),
             digits
                 .get((decimal_pos.max(0) as usize)..)
                 .filter(|v| !v.is_empty())
@@ -700,8 +700,8 @@ pub fn format_float(v: f64) -> String {
     } else {
         format!(
             "{}{}.{}e{}{:0width$}",
-            negative.then_some("-").unwrap_or_default(),
-            digits.get(0).cloned().unwrap_or(b'0') as char,
+            if negative { "-" } else { "" },
+            digits.first().cloned().unwrap_or(b'0') as char,
             digits
                 .get(1..)
                 .filter(|v| !v.is_empty())
