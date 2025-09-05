@@ -473,7 +473,7 @@ impl PageCache {
         if n > self.capacity {
             return Err(CacheError::Full);
         }
-        let available = self.capacity.saturating_sub(self.len());
+        let available = self.capacity - self.len();
         if n <= available {
             return Ok(());
         }
