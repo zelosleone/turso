@@ -8071,15 +8071,16 @@ impl Value {
             None => 10.0,
         };
 
+        if f <= 0.0 || base <= 0.0 || base == 1.0 {
+            return Value::Null;
+        }
+
         if base == 2.0 {
             return Value::Float(libm::log2(f));
         } else if base == 10.0 {
             return Value::Float(libm::log10(f));
         };
 
-        if f <= 0.0 || base <= 0.0 || base == 1.0 {
-            return Value::Null;
-        }
         let log_x = libm::log(f);
         let log_base = libm::log(base);
         let result = log_x / log_base;
