@@ -600,7 +600,7 @@ pub fn str_to_f64(input: impl AsRef<str>) -> Option<StrToF64> {
 
 pub fn format_float(v: f64) -> String {
     if v.is_nan() {
-        return "NaN".to_string();
+        return "".to_string();
     }
 
     if v.is_infinite() {
