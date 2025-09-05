@@ -65,14 +65,17 @@ use parking_lot::RwLock;
 use schema::Schema;
 use std::{
     borrow::Cow,
-    cell::{Cell, RefCell, UnsafeCell},
+    cell::{Cell, RefCell},
     collections::HashMap,
     fmt::{self, Display},
     io::Write,
     num::NonZero,
     ops::Deref,
     rc::Rc,
-    sync::{atomic::AtomicUsize, Arc, LazyLock, Mutex, Weak},
+    sync::{
+        atomic::{AtomicUsize, Ordering},
+        Arc, LazyLock, Mutex, Weak,
+    },
 };
 #[cfg(feature = "fs")]
 use storage::database::DatabaseFile;
@@ -186,7 +189,7 @@ pub struct Database {
     // Shared structures of a Database are the parts that are common to multiple threads that might
     // create DB connections.
     _shared_page_cache: Arc<RwLock<DumbLruPageCache>>,
-    maybe_shared_wal: RwLock<Option<Arc<UnsafeCell<WalFileShared>>>>,
+    shared_wal: Arc<RwLock<WalFileShared>>,
     db_state: Arc<AtomicDbState>,
     init_lock: Arc<Mutex<()>>,
     open_flags: OpenFlags,
@@ -227,9 +230,9 @@ impl fmt::Debug for Database {
         };
         debug_struct.field("init_lock", &init_lock_status);
 
-        let wal_status = match self.maybe_shared_wal.try_read().as_deref() {
-            Some(Some(_)) => "present",
-            Some(None) => "none",
+        let wal_status = match self.shared_wal.try_read() {
+            Some(wal) if wal.enabled.load(Ordering::Relaxed) => "enabled",
+            Some(_) => "disabled",
             None => "locked_for_write",
         };
         debug_struct.field("wal_state", &wal_status);
@@ -365,7 +368,7 @@ impl Database {
         flags: OpenFlags,
         opts: DatabaseOpts,
     ) -> Result<Arc<Database>> {
-        let maybe_shared_wal = WalFileShared::open_shared_if_exists(&io, wal_path)?;
+        let shared_wal = WalFileShared::open_shared_if_exists(&io, wal_path)?;
 
         let mv_store = if opts.enable_mvcc {
             Some(Arc::new(MvStore::new(
@@ -397,7 +400,7 @@ impl Database {
             wal_path: wal_path.to_string(),
             schema: Mutex::new(Arc::new(Schema::new(opts.enable_indexes))),
             _shared_page_cache: shared_page_cache.clone(),
-            maybe_shared_wal: RwLock::new(maybe_shared_wal),
+            shared_wal,
             db_file,
             builtin_syms: syms.into(),
             io: io.clone(),
@@ -534,10 +537,10 @@ impl Database {
     /// 2. PageSize::default(), i.e. 4096
     fn determine_actual_page_size(
         &self,
-        maybe_shared_wal: Option<&WalFileShared>,
+        shared_wal: &WalFileShared,
         requested_page_size: Option<usize>,
     ) -> Result<PageSize> {
-        if let Some(shared_wal) = maybe_shared_wal {
+        if shared_wal.enabled.load(Ordering::Relaxed) {
             let size_in_wal = shared_wal.page_size();
             if size_in_wal != 0 {
                 let Some(page_size) = PageSize::new(size_in_wal) else {
@@ -560,13 +563,12 @@ impl Database {
     }
 
     fn init_pager(&self, requested_page_size: Option<usize>) -> Result<Pager> {
-        // Open existing WAL file if present
-        let mut maybe_shared_wal = self.maybe_shared_wal.write();
-        if let Some(shared_wal) = maybe_shared_wal.clone() {
-            let page_size = self.determine_actual_page_size(
-                Some(unsafe { &*shared_wal.get() }),
-                requested_page_size,
-            )?;
+        // Check if WAL is enabled
+        let shared_wal = self.shared_wal.read();
+        if shared_wal.enabled.load(Ordering::Relaxed) {
+            let page_size = self.determine_actual_page_size(&shared_wal, requested_page_size)?;
+            drop(shared_wal);
+
             let buffer_pool = self.buffer_pool.clone();
             if self.db_state.is_initialized() {
                 buffer_pool.finalize_with_page_size(page_size.get() as usize)?;
@@ -575,7 +577,7 @@ impl Database {
             let db_state = self.db_state.clone();
             let wal = Rc::new(RefCell::new(WalFile::new(
                 self.io.clone(),
-                shared_wal,
+                self.shared_wal.clone(),
                 buffer_pool.clone(),
             )));
             let pager = Pager::new(
@@ -590,9 +592,10 @@ impl Database {
             pager.page_size.set(Some(page_size));
             return Ok(pager);
         }
-        let buffer_pool = self.buffer_pool.clone();
+        let page_size = self.determine_actual_page_size(&shared_wal, requested_page_size)?;
+        drop(shared_wal);
 
-        let page_size = self.determine_actual_page_size(None, requested_page_size)?;
+        let buffer_pool = self.buffer_pool.clone();
 
         if self.db_state.is_initialized() {
             buffer_pool.finalize_with_page_size(page_size.get() as usize)?;
@@ -614,13 +617,16 @@ impl Database {
         let file = self
             .io
             .open_file(&self.wal_path, OpenFlags::Create, false)?;
-        let real_shared_wal = WalFileShared::new_shared(file)?;
-        // Modify Database::maybe_shared_wal to point to the new WAL file so that other connections
-        // can open the existing WAL.
-        *maybe_shared_wal = Some(real_shared_wal.clone());
+
+        // Enable WAL in the existing shared instance
+        {
+            let mut shared_wal = self.shared_wal.write();
+            shared_wal.create(file)?;
+        }
+
         let wal = Rc::new(RefCell::new(WalFile::new(
             self.io.clone(),
-            real_shared_wal,
+            self.shared_wal.clone(),
             buffer_pool,
         )));
         pager.set_wal(wal);
@@ -1661,7 +1667,11 @@ impl Connection {
             return Ok(());
         }
 
-        *self._db.maybe_shared_wal.write() = None;
+        {
+            let mut shared_wal = self._db.shared_wal.write();
+            shared_wal.enabled.store(false, Ordering::Relaxed);
+            shared_wal.file = None;
+        }
         self.pager.borrow_mut().clear_page_cache();
         let pager = self._db.init_pager(Some(size.get() as usize))?;
         self.pager.replace(Rc::new(pager));

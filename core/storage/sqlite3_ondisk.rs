@@ -65,7 +65,8 @@ use crate::types::{RawSlice, RefValue, SerialType, SerialTypeKind, TextRef, Text
 use crate::{
     bail_corrupt_error, turso_assert, CompletionError, File, IOContext, Result, WalFileShared,
 };
-use std::cell::{Cell, UnsafeCell};
+use parking_lot::RwLock;
+use std::cell::Cell;
 use std::collections::{BTreeMap, HashMap};
 use std::mem::MaybeUninit;
 use std::pin::Pin;
@@ -1608,7 +1609,7 @@ pub fn write_varint_to_vec(value: u64, payload: &mut Vec<u8>) {
 }
 
 /// We need to read the WAL file on open to reconstruct the WAL frame cache.
-pub fn read_entire_wal_dumb(file: &Arc<dyn File>) -> Result<Arc<UnsafeCell<WalFileShared>>> {
+pub fn read_entire_wal_dumb(file: &Arc<dyn File>) -> Result<Arc<RwLock<WalFileShared>>> {
     let size = file.size()?;
     #[allow(clippy::arc_with_non_send_sync)]
     let buf_for_pread = Arc::new(Buffer::new_temporary(size as usize));
@@ -1620,14 +1621,15 @@ pub fn read_entire_wal_dumb(file: &Arc<dyn File>) -> Result<Arc<UnsafeCell<WalFi
         l.unlock();
     }
     #[allow(clippy::arc_with_non_send_sync)]
-    let wal_file_shared_ret = Arc::new(UnsafeCell::new(WalFileShared {
+    let wal_file_shared_ret = Arc::new(RwLock::new(WalFileShared {
+        enabled: AtomicBool::new(true),
         wal_header: header.clone(),
         min_frame: AtomicU64::new(0),
         max_frame: AtomicU64::new(0),
         nbackfills: AtomicU64::new(0),
         frame_cache: Arc::new(SpinLock::new(HashMap::new())),
         last_checksum: (0, 0),
-        file: file.clone(),
+        file: Some(file.clone()),
         read_locks,
         write_lock: TursoRwLock::new(),
         loaded: AtomicBool::new(false),
@@ -1708,7 +1710,7 @@ pub fn read_entire_wal_dumb(file: &Arc<dyn File>) -> Result<Arc<UnsafeCell<WalFi
         let mut current_offset = WAL_HEADER_SIZE;
         let mut frame_idx = 1_u64;
 
-        let wfs_data = unsafe { &mut *wal_file_shared_for_completion.get() };
+        let mut wfs_data = wal_file_shared_for_completion.write();
 
         if !checksum_header_failed {
             while current_offset + WAL_FRAME_HEADER_SIZE + page_size <= buf_slice.len() {
