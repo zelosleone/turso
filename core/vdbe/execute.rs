@@ -953,11 +953,43 @@ pub fn op_open_read(
     let num_columns = match cursor_type {
         CursorType::BTreeTable(table_rc) => table_rc.columns.len(),
         CursorType::BTreeIndex(index_arc) => index_arc.columns.len(),
+        CursorType::MaterializedView(table_rc, _) => table_rc.columns.len(),
         _ => unreachable!("This should not have happened"),
     };
 
     match cursor_type {
+        CursorType::MaterializedView(_, view_mutex) => {
+            // This is a materialized view with storage
+            // Create btree cursor for reading the persistent data
+            let btree_cursor = Box::new(BTreeCursor::new_table(
+                mv_cursor,
+                pager.clone(),
+                *root_page,
+                num_columns,
+            ));
+
+            // Get the view name and look up or create its transaction state
+            let view_name = view_mutex.lock().unwrap().name().to_string();
+            let tx_state = program
+                .connection
+                .view_transaction_states
+                .get_or_create(&view_name);
+
+            // Create materialized view cursor with this view's transaction state
+            let mv_cursor = crate::incremental::cursor::MaterializedViewCursor::new(
+                btree_cursor,
+                view_mutex.clone(),
+                pager.clone(),
+                tx_state,
+            )?;
+
+            cursors
+                .get_mut(*cursor_id)
+                .unwrap()
+                .replace(Cursor::new_materialized_view(mv_cursor));
+        }
         CursorType::BTreeTable(_) => {
+            // Regular table
             let cursor = BTreeCursor::new_table(mv_cursor, pager.clone(), *root_page, num_columns);
             cursors
                 .get_mut(*cursor_id)
@@ -1282,10 +1314,18 @@ pub fn op_rewind(
     );
     assert!(pc_if_empty.is_offset());
     let is_empty = {
-        let mut cursor = must_be_btree_cursor!(*cursor_id, program.cursor_ref, state, "Rewind");
-        let cursor = cursor.as_btree_mut();
-        return_if_io!(cursor.rewind());
-        cursor.is_empty()
+        let mut cursor = state.get_cursor(*cursor_id);
+        match &mut *cursor {
+            Cursor::BTree(btree_cursor) => {
+                return_if_io!(btree_cursor.rewind());
+                btree_cursor.is_empty()
+            }
+            Cursor::MaterializedView(mv_cursor) => {
+                return_if_io!(mv_cursor.rewind());
+                !mv_cursor.is_valid()?
+            }
+            _ => panic!("Rewind on non-btree/materialized-view cursor"),
+        }
     };
     if is_empty {
         state.pc = pc_if_empty.as_offset_int();
@@ -1430,17 +1470,43 @@ pub fn op_column(
             } => {
                 {
                     let mut table_cursor = state.get_cursor(table_cursor_id);
-                    let table_cursor = table_cursor.as_btree_mut();
-                    return_if_io!(
-                        table_cursor.seek(SeekKey::TableRowId(rowid), SeekOp::GE { eq_only: true })
-                    );
+                    // MaterializedView cursors shouldn't go through deferred seek logic
+                    // but if we somehow get here, handle it appropriately
+                    match &mut *table_cursor {
+                        Cursor::MaterializedView(mv_cursor) => {
+                            // Seek to the rowid in the materialized view
+                            return_if_io!(mv_cursor
+                                .seek(SeekKey::TableRowId(rowid), SeekOp::GE { eq_only: true }));
+                        }
+                        _ => {
+                            // Regular btree cursor
+                            let table_cursor = table_cursor.as_btree_mut();
+                            return_if_io!(table_cursor
+                                .seek(SeekKey::TableRowId(rowid), SeekOp::GE { eq_only: true }));
+                        }
+                    }
                 }
                 state.op_column_state = OpColumnState::GetColumn;
             }
             OpColumnState::GetColumn => {
+                // First check if this is a MaterializedViewCursor
+                {
+                    let mut cursor = state.get_cursor(*cursor_id);
+                    if let Cursor::MaterializedView(mv_cursor) = &mut *cursor {
+                        // Handle materialized view column access
+                        let value = return_if_io!(mv_cursor.column(*column));
+                        drop(cursor);
+                        state.registers[*dest] = Register::Value(value);
+                        break 'outer;
+                    }
+                    // Fall back to normal handling
+                }
+
                 let (_, cursor_type) = program.cursor_ref.get(*cursor_id).unwrap();
                 match cursor_type {
-                    CursorType::BTreeTable(_) | CursorType::BTreeIndex(_) => {
+                    CursorType::BTreeTable(_)
+                    | CursorType::BTreeIndex(_)
+                    | CursorType::MaterializedView(_, _) => {
                         'ifnull: {
                             let mut cursor_ref = must_be_btree_cursor!(
                                 *cursor_id,
@@ -1843,12 +1909,19 @@ pub fn op_next(
     );
     assert!(pc_if_next.is_offset());
     let is_empty = {
-        let mut cursor = must_be_btree_cursor!(*cursor_id, program.cursor_ref, state, "Next");
-        let cursor = cursor.as_btree_mut();
-        cursor.set_null_flag(false);
-        return_if_io!(cursor.next());
-
-        cursor.is_empty()
+        let mut cursor = state.get_cursor(*cursor_id);
+        match &mut *cursor {
+            Cursor::BTree(btree_cursor) => {
+                btree_cursor.set_null_flag(false);
+                return_if_io!(btree_cursor.next());
+                btree_cursor.is_empty()
+            }
+            Cursor::MaterializedView(mv_cursor) => {
+                let has_more = return_if_io!(mv_cursor.next());
+                !has_more
+            }
+            _ => panic!("Next on non-btree/materialized-view cursor"),
+        }
     };
     if !is_empty {
         // Increment metrics for row read
@@ -2444,9 +2517,18 @@ pub fn op_row_id(
                     } else {
                         state.registers[*dest] = Register::Value(Value::Null);
                     }
+                } else if let Some(Cursor::MaterializedView(mv_cursor)) =
+                    cursors.get_mut(*cursor_id).unwrap()
+                {
+                    if let Some(rowid) = return_if_io!(mv_cursor.rowid()) {
+                        state.registers[*dest] = Register::Value(Value::Integer(rowid));
+                    } else {
+                        state.registers[*dest] = Register::Value(Value::Null);
+                    }
                 } else {
                     return Err(LimboError::InternalError(
-                        "RowId: cursor is not a table or virtual cursor".to_string(),
+                        "RowId: cursor is not a table, virtual, or materialized view cursor"
+                            .to_string(),
                     ));
                 }
                 break;
@@ -2497,40 +2579,67 @@ pub fn op_seek_rowid(
     assert!(target_pc.is_offset());
     let (pc, did_seek) = {
         let mut cursor = state.get_cursor(*cursor_id);
-        let cursor = cursor.as_btree_mut();
-        let rowid = match state.registers[*src_reg].get_value() {
-            Value::Integer(rowid) => Some(*rowid),
-            Value::Null => None,
-            // For non-integer values try to apply affinity and convert them to integer.
-            other => {
-                let mut temp_reg = Register::Value(other.clone());
-                let converted = apply_affinity_char(&mut temp_reg, Affinity::Numeric);
-                if converted {
-                    match temp_reg.get_value() {
-                        Value::Integer(i) => Some(*i),
-                        Value::Float(f) => Some(*f as i64),
-                        _ => unreachable!("apply_affinity_char with Numeric should produce an integer if it returns true"),
+
+        // Handle MaterializedView cursor
+        let (pc, did_seek) = match &mut *cursor {
+            Cursor::MaterializedView(mv_cursor) => {
+                let rowid = match state.registers[*src_reg].get_value() {
+                    Value::Integer(rowid) => Some(*rowid),
+                    Value::Null => None,
+                    _ => None,
+                };
+
+                match rowid {
+                    Some(rowid) => {
+                        let seek_result = return_if_io!(mv_cursor
+                            .seek(SeekKey::TableRowId(rowid), SeekOp::GE { eq_only: true }));
+                        let pc = if !matches!(seek_result, SeekResult::Found) {
+                            target_pc.as_offset_int()
+                        } else {
+                            state.pc + 1
+                        };
+                        (pc, true)
                     }
-                } else {
-                    None
+                    None => (target_pc.as_offset_int(), false),
                 }
             }
-        };
-
-        match rowid {
-            Some(rowid) => {
-                let seek_result = return_if_io!(
-                    cursor.seek(SeekKey::TableRowId(rowid), SeekOp::GE { eq_only: true })
-                );
-                let pc = if !matches!(seek_result, SeekResult::Found) {
-                    target_pc.as_offset_int()
-                } else {
-                    state.pc + 1
+            Cursor::BTree(btree_cursor) => {
+                let rowid = match state.registers[*src_reg].get_value() {
+                    Value::Integer(rowid) => Some(*rowid),
+                    Value::Null => None,
+                    // For non-integer values try to apply affinity and convert them to integer.
+                    other => {
+                        let mut temp_reg = Register::Value(other.clone());
+                        let converted = apply_affinity_char(&mut temp_reg, Affinity::Numeric);
+                        if converted {
+                            match temp_reg.get_value() {
+                                Value::Integer(i) => Some(*i),
+                                Value::Float(f) => Some(*f as i64),
+                                _ => unreachable!("apply_affinity_char with Numeric should produce an integer if it returns true"),
+                            }
+                        } else {
+                            None
+                        }
+                    }
                 };
-                (pc, true)
+
+                match rowid {
+                    Some(rowid) => {
+                        let seek_result = return_if_io!(btree_cursor
+                            .seek(SeekKey::TableRowId(rowid), SeekOp::GE { eq_only: true }));
+                        let pc = if !matches!(seek_result, SeekResult::Found) {
+                            target_pc.as_offset_int()
+                        } else {
+                            state.pc + 1
+                        };
+                        (pc, true)
+                    }
+                    None => (target_pc.as_offset_int(), false),
+                }
             }
-            None => (target_pc.as_offset_int(), false),
-        }
+            _ => panic!("SeekRowid on non-btree/materialized-view cursor"),
+        };
+        (pc, did_seek)
     };
     // Increment btree_seeks metric for SeekRowid operation after cursor is dropped
     if did_seek {
@@ -5192,12 +5301,11 @@ pub fn op_insert(
         match &state.op_insert_state.sub_state {
             OpInsertSubState::MaybeCaptureRecord => {
                 let schema = program.connection.schema.borrow();
-                let dependent_views =
-                    schema.get_dependent_materialized_views_unnormalized(table_name);
+                let dependent_views = schema.get_dependent_materialized_views(table_name);
                 // If there are no dependent views, we don't need to capture the old record.
                 // We also don't need to do it if the rowid of the UPDATEd row was changed, because that means
                 // we deleted it earlier and `op_delete` already captured the change.
-                if dependent_views.is_none() || flag.has(InsertFlags::UPDATE_ROWID_CHANGE) {
+                if dependent_views.is_empty() || flag.has(InsertFlags::UPDATE_ROWID_CHANGE) {
                     if flag.has(InsertFlags::REQUIRE_SEEK) {
                         state.op_insert_state.sub_state = OpInsertSubState::Seek;
                     } else {
@@ -5303,9 +5411,8 @@ pub fn op_insert(
                     state.op_insert_state.sub_state = OpInsertSubState::UpdateLastRowid;
                 } else {
                     let schema = program.connection.schema.borrow();
-                    let dependent_views =
-                        schema.get_dependent_materialized_views_unnormalized(table_name);
-                    if dependent_views.is_some() {
+                    let dependent_views = schema.get_dependent_materialized_views(table_name);
+                    if !dependent_views.is_empty() {
                         state.op_insert_state.sub_state = OpInsertSubState::ApplyViewChange;
                     } else {
                         break;
@@ -5325,9 +5432,8 @@ pub fn op_insert(
                     program.n_change.set(prev_changes + 1);
                 }
                 let schema = program.connection.schema.borrow();
-                let dependent_views =
-                    schema.get_dependent_materialized_views_unnormalized(table_name);
-                if dependent_views.is_some() {
+                let dependent_views = schema.get_dependent_materialized_views(table_name);
+                if !dependent_views.is_empty() {
                     state.op_insert_state.sub_state = OpInsertSubState::ApplyViewChange;
                     continue;
                 }
@@ -5335,10 +5441,8 @@ pub fn op_insert(
             }
             OpInsertSubState::ApplyViewChange => {
                 let schema = program.connection.schema.borrow();
-                let dependent_views =
-                    schema.get_dependent_materialized_views_unnormalized(table_name);
-                assert!(dependent_views.is_some());
-                let dependent_views = dependent_views.unwrap();
+                let dependent_views = schema.get_dependent_materialized_views(table_name);
+                assert!(!dependent_views.is_empty());
 
                 let (key, values) = {
                     let mut cursor = state.get_cursor(*cursor_id);
@@ -5383,17 +5487,24 @@ pub fn op_insert(
                     (key, new_values)
                 };
 
-                let mut tx_states = program.connection.view_transaction_states.borrow_mut();
+                for v in dependent_views.iter() {}
+
                 if let Some((key, values)) = state.op_insert_state.old_record.take() {
                     for view_name in dependent_views.iter() {
-                        let tx_state = tx_states.entry(view_name.clone()).or_default();
-                        tx_state.delta.delete(key, values.clone());
+                        let tx_state = program
+                            .connection
+                            .view_transaction_states
+                            .get_or_create(view_name);
+                        tx_state.delete(key, values.clone());
                     }
                 }
                 for view_name in dependent_views.iter() {
-                    let tx_state = tx_states.entry(view_name.clone()).or_default();
+                    let tx_state = program
+                        .connection
+                        .view_transaction_states
+                        .get_or_create(view_name);
 
-                    tx_state.delta.insert(key, values.clone());
+                    tx_state.insert(key, values.clone());
                 }
 
                 break;
@@ -5522,10 +5633,12 @@ pub fn op_delete(
                 assert!(!dependent_views.is_empty());
                 let maybe_deleted_record = state.op_delete_state.deleted_record.take();
                 if let Some((key, values)) = maybe_deleted_record {
-                    let mut tx_states = program.connection.view_transaction_states.borrow_mut();
                     for view_name in dependent_views {
-                        let tx_state = tx_states.entry(view_name.clone()).or_default();
-                        tx_state.delta.delete(key, values.clone());
+                        let tx_state = program
+                            .connection
+                            .view_transaction_states
+                            .get_or_create(&view_name);
+                        tx_state.delete(key, values.clone());
                     }
                 }
                 break;
@@ -6232,7 +6345,10 @@ pub fn op_open_write(
     } else {
         let num_columns = match cursor_type {
             CursorType::BTreeTable(table_rc) => table_rc.columns.len(),
-            _ => unreachable!("Expected BTreeTable. This should not have happened."),
+            CursorType::MaterializedView(table_rc, _) => table_rc.columns.len(),
+            _ => unreachable!(
+                "Expected BTreeTable or MaterializedView. This should not have happened."
+            ),
         };
 
         let cursor =
@@ -6453,6 +6569,7 @@ pub fn op_parse_schema(
         },
         insn
     );
+
     let conn = program.connection.clone();
     // set auto commit to false in order for parse schema to not commit changes as transaction state is stored in connection,
     // and we use the same connection for nested query.
@@ -6464,7 +6581,7 @@ pub fn op_parse_schema(
 
         conn.with_schema_mut(|schema| {
             // TODO: This function below is synchronous, make it async
-            let existing_views = schema.materialized_views.clone();
+            let existing_views = schema.incremental_views.clone();
             conn.is_nested_stmt.set(true);
             parse_schema_rows(
                 stmt,
@@ -6479,7 +6596,7 @@ pub fn op_parse_schema(
 
         conn.with_schema_mut(|schema| {
             // TODO: This function below is synchronous, make it async
-            let existing_views = schema.materialized_views.clone();
+            let existing_views = schema.incremental_views.clone();
             conn.is_nested_stmt.set(true);
             parse_schema_rows(
                 stmt,
@@ -6500,14 +6617,75 @@ pub fn op_parse_schema(
 pub fn op_populate_materialized_views(
     program: &Program,
     state: &mut ProgramState,
-    _insn: &Insn,
-    _pager: &Rc<Pager>,
+    insn: &Insn,
+    pager: &Rc<Pager>,
     _mv_store: Option<&Arc<MvStore>>,
 ) -> Result<InsnFunctionStepResult> {
-    let conn = program.connection.clone();
-    let schema = conn.schema.borrow();
+    load_insn!(PopulateMaterializedViews { cursors }, insn);
 
-    return_if_io!(schema.populate_materialized_views(&conn));
+    let conn = program.connection.clone();
+
+    // For each view, get its cursor and root page
+    let mut view_info = Vec::new();
+    {
+        let cursors_ref = state.cursors.borrow();
+        for (view_name, cursor_id) in cursors {
+            // Get the cursor to find the root page
+            let cursor = cursors_ref
+                .get(*cursor_id)
+                .and_then(|c| c.as_ref())
+                .ok_or_else(|| {
+                    LimboError::InternalError(format!("Cursor {cursor_id} not found"))
+                })?;
+
+            let root_page = match cursor {
+                crate::types::Cursor::BTree(btree_cursor) => btree_cursor.root_page(),
+                _ => {
+                    return Err(LimboError::InternalError(
+                        "Expected BTree cursor for materialized view".into(),
+                    ))
+                }
+            };
+
+            view_info.push((view_name.clone(), root_page, *cursor_id));
+        }
+    }
+
+    // Now populate the views (after releasing the schema borrow)
+    for (view_name, _root_page, cursor_id) in view_info {
+        let schema = conn.schema.borrow();
+        if let Some(view) = schema.get_materialized_view(&view_name) {
+            let mut view = view.lock().unwrap();
+            // Drop the schema borrow before calling populate_from_table
+            drop(schema);
+
+            // Get the cursor for writing
+            // Get a mutable reference to the cursor
+            let mut cursors_ref = state.cursors.borrow_mut();
+            let cursor = cursors_ref
+                .get_mut(cursor_id)
+                .and_then(|c| c.as_mut())
+                .ok_or_else(|| {
+                    LimboError::InternalError(format!(
+                        "Cursor {cursor_id} not found for population"
+                    ))
+                })?;
+
+            // Extract the BTreeCursor
+            let btree_cursor = match cursor {
+                crate::types::Cursor::BTree(btree_cursor) => btree_cursor,
+                _ => {
+                    return Err(LimboError::InternalError(
+                        "Expected BTree cursor for materialized view population".into(),
+                    ))
+                }
+            };
+
+            // Now populate it with the cursor for writing
+            return_if_io!(view.populate_from_table(&conn, pager, btree_cursor.as_mut()));
+        }
+    }
+
     // All views populated, advance to next instruction
     state.pc += 1;
     Ok(InsnFunctionStepResult::Step)
@@ -6931,6 +7109,9 @@ pub fn op_open_ephemeral(
                 }
                 CursorType::VirtualTable(_) => {
                     panic!("OpenEphemeral on virtual table cursor, use Insn::VOpen instead");
+                }
+                CursorType::MaterializedView(_, _) => {
+                    panic!("OpenEphemeral on materialized view cursor");
                 }
             }
 

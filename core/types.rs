@@ -2430,6 +2430,7 @@ pub enum Cursor {
     Pseudo(PseudoCursor),
     Sorter(Sorter),
     Virtual(VirtualTableCursor),
+    MaterializedView(Box<crate::incremental::cursor::MaterializedViewCursor>),
 }
 
 impl Cursor {
@@ -2443,6 +2444,12 @@ impl Cursor {
 
     pub fn new_sorter(cursor: Sorter) -> Self {
         Self::Sorter(cursor)
+    }
+
+    pub fn new_materialized_view(
+        cursor: crate::incremental::cursor::MaterializedViewCursor,
+    ) -> Self {
+        Self::MaterializedView(Box::new(cursor))
     }
 
     pub fn as_btree_mut(&mut self) -> &mut BTreeCursor {
@@ -2470,6 +2477,15 @@ impl Cursor {
         match self {
             Self::Virtual(cursor) => cursor,
             _ => panic!("Cursor is not a virtual cursor"),
+        }
+    }
+
+    pub fn as_materialized_view_mut(
+        &mut self,
+    ) -> &mut crate::incremental::cursor::MaterializedViewCursor {
+        match self {
+            Self::MaterializedView(cursor) => cursor,
+            _ => panic!("Cursor is not a materialized view cursor"),
         }
     }
 }
@@ -2545,6 +2561,23 @@ macro_rules! return_if_io {
         match $expr? {
             IOResult::Done(v) => v,
             IOResult::IO(io) => return Ok(IOResult::IO(io)),
+        }
+    };
+}
+
+#[macro_export]
+macro_rules! return_and_restore_if_io {
+    ($field:expr, $saved_state:expr, $e:expr) => {
+        match $e {
+            Ok(IOResult::Done(v)) => v,
+            Ok(IOResult::IO(io)) => {
+                let _ = std::mem::replace($field, $saved_state);
+                return Ok(IOResult::IO(io));
+            }
+            Err(e) => {
+                let _ = std::mem::replace($field, $saved_state);
+                return Err(e);
+            }
         }
     };
 }

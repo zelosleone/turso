@@ -82,6 +82,12 @@ pub fn prepare_delete_plan(
         Some(table) => table,
         None => crate::bail_parse_error!("no such table: {}", tbl_name),
     };
+
+    // Check if this is a materialized view
+    if schema.is_materialized_view(&tbl_name) {
+        crate::bail_parse_error!("cannot modify materialized view {}", tbl_name);
+    }
+
     let table = if let Some(table) = table.virtual_table() {
         Table::Virtual(table.clone())
     } else if let Some(table) = table.btree() {

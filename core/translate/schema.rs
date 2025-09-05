@@ -690,6 +690,14 @@ pub fn translate_drop_table(
     }
 
     let table = table.unwrap(); // safe since we just checked for None
+
+    // Check if this is a materialized view - if so, refuse to drop it with DROP TABLE
+    if schema.is_materialized_view(tbl_name.name.as_str()) {
+        bail_parse_error!(
+            "Cannot DROP TABLE on materialized view {}. Use DROP VIEW instead.",
+            tbl_name.name.as_str()
+        );
+    }
     let cdc_table = prepare_cdc_if_necessary(&mut program, schema, SQLITE_TABLEID)?;
 
     let null_reg = program.alloc_register(); //  r1

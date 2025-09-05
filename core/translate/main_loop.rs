@@ -196,7 +196,8 @@ pub fn init_loop(
                 t_ctx.meta_left_joins[table_index] = Some(lj_metadata);
             }
         }
-        let (table_cursor_id, index_cursor_id) = table.open_cursors(program, mode)?;
+        let (table_cursor_id, index_cursor_id) =
+            table.open_cursors(program, mode, t_ctx.resolver.schema)?;
         match &table.op {
             Operation::Scan(Scan::BTreeTable { index, .. }) => match (mode, &table.table) {
                 (OperationMode::SELECT, Table::BTree(btree)) => {

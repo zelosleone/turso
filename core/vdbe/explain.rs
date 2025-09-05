@@ -19,6 +19,7 @@ pub fn insn_to_str(
             CursorType::BTreeIndex(index) => &index.name,
             CursorType::Pseudo(_) => "pseudo",
             CursorType::VirtualTable(virtual_table) => &virtual_table.name,
+            CursorType::MaterializedView(table, _) => &table.name,
             CursorType::Sorter => "sorter",
         }
     };
@@ -540,6 +541,10 @@ pub fn insn_to_str(
                     CursorType::BTreeIndex(index) => {
                         let name = &index.columns.get(*column).unwrap().name;
                         Some(name)
+                    }
+                    CursorType::MaterializedView(table, _) => {
+                        let name = table.columns.get(*column).and_then(|v| v.name.as_ref());
+                        name
                     }
                     CursorType::Pseudo(_) => None,
                     CursorType::Sorter => None,
@@ -1337,13 +1342,13 @@ pub fn insn_to_str(
                 0,
                 where_clause.clone().unwrap_or("NULL".to_string()),
             ),
-            Insn::PopulateMaterializedViews => (
+            Insn::PopulateMaterializedViews { cursors } => (
                 "PopulateMaterializedViews",
                 0,
                 0,
                 0,
                 Value::Null,
-                0,
+                cursors.len() as u16,
                 "".to_string(),
             ),
             Insn::Prev {
