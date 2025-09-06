@@ -60,13 +60,7 @@ use execute::{
 };
 
 use regex::Regex;
-use std::{
-    cell::{Cell, RefCell},
-    collections::HashMap,
-    num::NonZero,
-    rc::Rc,
-    sync::Arc,
-};
+use std::{cell::Cell, collections::HashMap, num::NonZero, rc::Rc, sync::Arc};
 use tracing::{instrument, Level};
 
 /// State machine for committing view deltas with I/O handling
@@ -266,7 +260,7 @@ pub struct Row {
 pub struct ProgramState {
     pub io_completions: Option<IOCompletions>,
     pub pc: InsnReference,
-    cursors: RefCell<Vec<Option<Cursor>>>,
+    cursors: Vec<Option<Cursor>>,
     registers: Vec<Register>,
     pub(crate) result_row: Option<Row>,
     last_compare: Option<std::cmp::Ordering>,
@@ -301,8 +295,7 @@ pub struct ProgramState {
 
 impl ProgramState {
     pub fn new(max_registers: usize, max_cursors: usize) -> Self {
-        let cursors: RefCell<Vec<Option<Cursor>>> =
-            RefCell::new((0..max_cursors).map(|_| None).collect());
+        let cursors: Vec<Option<Cursor>> = (0..max_cursors).map(|_| None).collect();
         let registers = vec![Register::Value(Value::Null); max_registers];
         Self {
             io_completions: None,
@@ -381,7 +374,7 @@ impl ProgramState {
 
     pub fn reset(&mut self) {
         self.pc = 0;
-        self.cursors.borrow_mut().iter_mut().for_each(|c| *c = None);
+        self.cursors.iter_mut().for_each(|c| *c = None);
         self.registers
             .iter_mut()
             .for_each(|r| *r = Register::Value(Value::Null));
@@ -396,14 +389,12 @@ impl ProgramState {
         self.json_cache.clear()
     }
 
-    pub fn get_cursor(&self, cursor_id: CursorID) -> std::cell::RefMut<Cursor> {
-        let cursors = self.cursors.borrow_mut();
-        std::cell::RefMut::map(cursors, |c| {
-            c.get_mut(cursor_id)
-                .unwrap_or_else(|| panic!("cursor id {cursor_id} out of bounds"))
-                .as_mut()
-                .unwrap_or_else(|| panic!("cursor id {cursor_id} is None"))
-        })
+    pub fn get_cursor(&mut self, cursor_id: CursorID) -> &mut Cursor {
+        self.cursors
+            .get_mut(cursor_id)
+            .unwrap_or_else(|| panic!("cursor id {cursor_id} out of bounds"))
+            .as_mut()
+            .unwrap_or_else(|| panic!("cursor id {cursor_id} is None"))
     }
 }
 
@@ -425,15 +416,29 @@ macro_rules! must_be_btree_cursor {
     ($cursor_id:expr, $cursor_ref:expr, $state:expr, $insn_name:expr) => {{
         let (_, cursor_type) = $cursor_ref.get($cursor_id).unwrap();
         let cursor = match cursor_type {
-            CursorType::BTreeTable(_) => $state.get_cursor($cursor_id),
-            CursorType::BTreeIndex(_) => $state.get_cursor($cursor_id),
-            CursorType::MaterializedView(_, _) => $state.get_cursor($cursor_id),
+            CursorType::BTreeTable(_) => $crate::get_cursor!($state, $cursor_id),
+            CursorType::BTreeIndex(_) => $crate::get_cursor!($state, $cursor_id),
+            CursorType::MaterializedView(_, _) => $crate::get_cursor!($state, $cursor_id),
             CursorType::Pseudo(_) => panic!("{} on pseudo cursor", $insn_name),
             CursorType::Sorter => panic!("{} on sorter cursor", $insn_name),
             CursorType::VirtualTable(_) => panic!("{} on virtual table cursor", $insn_name),
         };
         cursor
     }};
+}
+
+/// Macro is necessary to help the borrow checker see we are only accessing state.cursor field
+/// and nothing else
+#[macro_export]
+macro_rules! get_cursor {
+    ($state:expr, $cursor_id:expr) => {
+        $state
+            .cursors
+            .get_mut($cursor_id)
+            .unwrap_or_else(|| panic!("cursor id {} out of bounds", $cursor_id))
+            .as_mut()
+            .unwrap_or_else(|| panic!("cursor id {} is None", $cursor_id))
+    };
 }
 
 pub struct Program {
