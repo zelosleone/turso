@@ -346,7 +346,7 @@ pub fn translate_condition_expr(
                 op,
                 result_reg,
                 resolver,
-                Some(condition_metadata.clone()),
+                Some(condition_metadata),
                 emit_binary_condition_insn,
             )?;
         }
@@ -2171,6 +2171,7 @@ pub fn translate_expr(
     Ok(target_register)
 }
 
+#[allow(clippy::too_many_arguments)]
 fn binary_expr_shared(
     program: &mut ProgramBuilder,
     referenced_tables: Option<&TableReferences>,
