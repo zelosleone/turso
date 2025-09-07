@@ -415,8 +415,13 @@ impl Register {
 macro_rules! must_be_btree_cursor {
     ($cursor_id:expr, $cursor_ref:expr, $state:expr, $insn_name:expr) => {{
         let (_, cursor_type) = $cursor_ref.get($cursor_id).unwrap();
-        if matches!(cursor_type, CursorType::BTreeTable(_) | CursorType::BTreeIndex(_)) | CursorType::Materialized(_, _) {
-            $state.get_cursor($cursor_id)
+        if matches!(
+            cursor_type,
+            CursorType::BTreeTable(_)
+                | CursorType::BTreeIndex(_)
+                | CursorType::MaterializedView(_, _)
+        ) {
+            $crate::get_cursor!($state, $cursor_id)
         } else {
             panic!("{} on unexpected cursor", $insn_name)
         }
