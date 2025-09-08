@@ -1,4 +1,5 @@
 #![allow(clippy::arc_with_non_send_sync)]
+extern crate core;
 
 mod assert;
 mod error;
@@ -40,6 +41,7 @@ pub mod numeric;
 mod numeric;
 
 use crate::incremental::view::AllViewsTxState;
+use crate::storage::checksum::CHECKSUM_REQUIRED_RESERVED_BYTES;
 use crate::storage::encryption::CipherMode;
 use crate::translate::pragma::TURSO_CDC_DEFAULT_TABLE_NAME;
 #[cfg(all(feature = "fs", feature = "conn_raw_api"))]
@@ -516,6 +518,23 @@ impl Database {
         Ok(page_size)
     }
 
+    fn read_reserved_space_bytes_from_db_header(&self) -> Result<u8> {
+        turso_assert!(
+            self.db_state.is_initialized(),
+            "read_reserved_space_bytes_from_db_header called on uninitialized database"
+        );
+        turso_assert!(
+            PageSize::MIN % 512 == 0,
+            "header read must be a multiple of 512 for O_DIRECT"
+        );
+        let buf = Arc::new(Buffer::new_temporary(PageSize::MIN as usize));
+        let c = Completion::new_read(buf.clone(), move |_res| {});
+        let c = self.db_file.read_header(c)?;
+        self.io.wait_for_completion(c)?;
+        let reserved_bytes = u8::from_be_bytes(buf.as_slice()[20..21].try_into().unwrap());
+        Ok(reserved_bytes)
+    }
+
     /// Read the page size in order of preference:
     /// 1. From the WAL header if it exists and is initialized
     /// 2. From the database header if the database is initialized
@@ -547,6 +566,16 @@ impl Database {
                 bail_corrupt_error!("invalid requested page size: {size}");
             };
             Ok(page_size)
+        }
+    }
+
+    /// if the database is initialized i.e. it exists on disk, return the reserved space bytes from
+    /// the header or None
+    fn maybe_get_reserved_space_bytes(&self) -> Result<Option<u8>> {
+        if self.db_state.is_initialized() {
+            Ok(Some(self.read_reserved_space_bytes_from_db_header()?))
+        } else {
+            Ok(None)
         }
     }
 
