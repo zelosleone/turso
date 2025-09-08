@@ -584,6 +584,7 @@ pub fn insn_to_str(
                 count,
                 dest_reg,
                 index_name,
+                affinity_str: _,
             } => {
                 let for_index = index_name.as_ref().map(|name| format!("; for {name}"));
                 (

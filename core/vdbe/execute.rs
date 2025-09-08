@@ -1864,10 +1864,27 @@ pub fn op_make_record(
             start_reg,
             count,
             dest_reg,
+            affinity_str,
             ..
         },
         insn
     );
+
+    if let Some(affinity_str) = affinity_str {
+        if affinity_str.len() != *count {
+            return Err(LimboError::InternalError(format!(
+                "MakeRecord: the length of affinity string ({}) does not match the count ({})",
+                affinity_str.len(),
+                *count
+            )));
+        }
+        for (i, affinity_ch) in affinity_str.chars().enumerate().take(*count) {
+            let reg_index = *start_reg + i;
+            let affinity = Affinity::from_char(affinity_ch);
+            apply_affinity_char(&mut state.registers[reg_index], affinity);
+        }
+    }
+
     let record = make_record(&state.registers, start_reg, count);
     state.registers[*dest_reg] = Register::Record(record);
     state.pc += 1;

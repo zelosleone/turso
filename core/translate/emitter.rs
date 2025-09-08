@@ -1038,6 +1038,7 @@ fn emit_update_insns(
             count: num_cols + 1,
             dest_reg: *record_reg,
             index_name: Some(index.name.clone()),
+            affinity_str: None,
         });
 
         if !index.unique {
@@ -1138,11 +1139,19 @@ fn emit_update_insns(
         }
 
         let record_reg = program.alloc_register();
+
+        let affinity_str = table_ref
+            .columns()
+            .iter()
+            .map(|col| col.affinity().aff_mask())
+            .collect::<String>();
+
         program.emit_insn(Insn::MakeRecord {
             start_reg: start,
             count: table_ref.columns().len(),
             dest_reg: record_reg,
             index_name: None,
+            affinity_str: Some(affinity_str),
         });
 
         if has_user_provided_rowid {
@@ -1282,6 +1291,7 @@ fn emit_update_insns(
                 count: 2 * table_ref.columns().len(),
                 dest_reg: record_reg,
                 index_name: None,
+                affinity_str: None,
             });
             Some(record_reg)
         } else {
@@ -1398,11 +1408,18 @@ pub fn emit_cdc_patch_record(
             dst_reg: columns_reg + rowid_alias_position,
             extra_amount: 0,
         });
+        let affinity_str = table
+            .columns()
+            .iter()
+            .map(|col| col.affinity().aff_mask())
+            .collect::<String>();
+
         program.emit_insn(Insn::MakeRecord {
             start_reg: columns_reg,
             count: table.columns().len(),
             dest_reg: record_reg,
             index_name: None,
+            affinity_str: Some(affinity_str),
         });
         record_reg
     } else {
@@ -1428,11 +1445,17 @@ pub fn emit_cdc_full_record(
             program.emit_column_or_rowid(table_cursor_id, i, columns_reg + 1 + i);
         }
     }
+    let affinity_str = columns
+        .iter()
+        .map(|col| col.affinity().aff_mask())
+        .collect::<String>();
+
     program.emit_insn(Insn::MakeRecord {
         start_reg: columns_reg + 1,
         count: columns.len(),
         dest_reg: columns_reg,
         index_name: None,
+        affinity_str: Some(affinity_str),
     });
     columns_reg
 }
@@ -1535,6 +1558,7 @@ pub fn emit_cdc_insns(
         count: 8,
         dest_reg: record_reg,
         index_name: None,
+        affinity_str: None,
     });
 
     program.emit_insn(Insn::Insert {

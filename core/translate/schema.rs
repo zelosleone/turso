@@ -257,6 +257,7 @@ pub fn emit_schema_entry(
         count: 5,
         dest_reg: record_reg,
         index_name: None,
+        affinity_str: None,
     });
 
     program.emit_insn(Insn::Insert {
@@ -614,6 +615,7 @@ pub fn translate_create_virtual_table(
             count: args_vec.len(),
             dest_reg: args_record_reg,
             index_name: None,
+            affinity_str: None,
         });
         Some(args_record_reg)
     } else {
@@ -998,6 +1000,7 @@ pub fn translate_drop_table(
             count: 5,
             dest_reg: new_record_register,
             index_name: None,
+            affinity_str: None,
         });
         program.emit_insn(Insn::Delete {
             cursor_id: sqlite_schema_cursor_id_1,

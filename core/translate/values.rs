@@ -199,6 +199,7 @@ fn emit_values_to_index(
             count: row_len,
             dest_reg: record_reg,
             index_name: Some(index.name.clone()),
+            affinity_str: None,
         });
         program.emit_insn(Insn::IdxInsert {
             cursor_id: *cursor_id,
