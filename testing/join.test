@@ -319,3 +319,13 @@ do_execsql_test_on_specific_db {:memory:} left-join-seek-key-regression-test {
   INSERT INTO t VALUES (1);
   SELECT * FROM t LEFT JOIN u ON false WHERE u.x = 1; 
 } {}
+
+# regression test for issue 2924: calling Next on a cursor that hasn't moved yet
+do_execsql_test_on_specific_db {:memory:} next-crash {
+  create table a(x int primary key,y);
+  create table b(x int primary key,y);
+  create table c(x int primary key,y);
+  insert into a values (1,1),(2,2);
+  select a.x, b.x, c.x from a left join b on a.y=b.x left join c on b.y=c.x;
+} {1||
+2||}
