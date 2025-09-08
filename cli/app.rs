@@ -1373,7 +1373,7 @@ impl Limbo {
         // FIXME: we don't yet support PRAGMA foreign_keys=OFF internally,
         // so for now this hacky boolean that decides not to emit it when cloning
         if fk {
-            writeln!(out, "PRAGMA foreign_keys=OFF")?;
+            writeln!(out, "PRAGMA foreign_keys=OFF;")?;
         }
         writeln!(out, "BEGIN TRANSACTION;")?;
         // FIXME: At this point, SQLite executes the following:
