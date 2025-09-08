@@ -16,7 +16,7 @@ use crate::{
     Result, TransactionState,
 };
 use parking_lot::RwLock;
-use std::cell::{Cell, OnceCell, RefCell, UnsafeCell};
+use std::cell::{Cell, RefCell, UnsafeCell};
 use std::collections::HashSet;
 use std::hash;
 use std::rc::Rc;
@@ -43,7 +43,7 @@ impl HeaderRef {
     pub fn from_pager(pager: &Pager) -> Result<IOResult<Self>> {
         loop {
             let state = pager.header_ref_state.borrow().clone();
-            tracing::trace!(?state);
+            tracing::trace!("HeaderRef::from_pager - {:?}", state);
             match state {
                 HeaderRefState::Start => {
                     if !pager.db_state.is_initialized() {
@@ -491,7 +491,7 @@ pub struct Pager {
     /// `usable_space` calls. TODO: Invalidate reserved_space when we add the functionality
     /// to change it.
     pub(crate) page_size: Cell<Option<PageSize>>,
-    reserved_space: OnceCell<u8>,
+    reserved_space: Cell<Option<u8>>,
     free_page_state: RefCell<FreePageState>,
     /// Maximum number of pages allowed in the database. Default is 1073741823 (SQLite default).
     max_page_count: Cell<u32>,
@@ -597,7 +597,7 @@ impl Pager {
             init_lock,
             allocate_page1_state,
             page_size: Cell::new(None),
-            reserved_space: OnceCell::new(),
+            reserved_space: Cell::new(None),
             free_page_state: RefCell::new(FreePageState::Start),
             allocate_page_state: RefCell::new(AllocatePageState::Start),
             max_page_count: Cell::new(DEFAULT_MAX_PAGE_COUNT),
@@ -969,7 +969,7 @@ impl Pager {
                 .unwrap_or_default()
         });
 
-        let reserved_space = *self.reserved_space.get_or_init(|| {
+        let reserved_space = *self.reserved_space.get().get_or_insert_with(|| {
             self.io
                 .block(|| self.with_header(|header| header.reserved_space))
                 .unwrap_or_default()
@@ -1809,15 +1809,25 @@ impl Pager {
                 assert_eq!(default_header.database_size.get(), 0);
                 default_header.database_size = 1.into();
 
-                // if a key is set, then we will reserve space for encryption metadata
-                let io_ctx = self.io_ctx.borrow();
-                if let Some(ctx) = io_ctx.encryption_context() {
-                    default_header.reserved_space = ctx.required_reserved_bytes()
-                }
+                // based on the IOContext set, we will set the reserved space bytes as required by
+                // either the encryption or checksum, or None if they are not set.
+                let reserved_space_bytes = {
+                    let io_ctx = self.io_ctx.borrow();
+                    io_ctx.get_reserved_space_bytes()
+                };
+                default_header.reserved_space = reserved_space_bytes;
+                self.reserved_space.set(Some(reserved_space_bytes));
 
                 if let Some(size) = self.page_size.get() {
                     default_header.page_size = size;
                 }
+
+                tracing::info!(
+                    "allocate_page1(Start) page_size = {:?}, reserved_space = {}",
+                    default_header.page_size,
+                    default_header.reserved_space
+                );
+
                 self.buffer_pool
                     .finalize_with_page_size(default_header.page_size.get() as usize)?;
                 let page = allocate_new_page(1, &self.buffer_pool, 0);
@@ -2194,6 +2204,20 @@ impl Pager {
         wal.borrow_mut()
             .set_io_context(self.io_ctx.borrow().clone());
         Ok(())
+    }
+
+    pub fn reset_checksum_context(&self) {
+        {
+            let mut io_ctx = self.io_ctx.borrow_mut();
+            io_ctx.reset_checksum();
+        }
+        let Some(wal) = self.wal.as_ref() else { return };
+        wal.borrow_mut()
+            .set_io_context(self.io_ctx.borrow().clone())
+    }
+
+    pub fn set_reserved_space_bytes(&self, value: u8) {
+        self.reserved_space.set(Some(value))
     }
 }
 
