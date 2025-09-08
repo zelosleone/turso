@@ -4,6 +4,7 @@
 
 *.so
 *.ipynb
+*.o
 
 # Python
 .mypy_cache/
