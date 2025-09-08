@@ -1203,6 +1203,10 @@ impl BTreeCursor {
                 }
                 None => return Ok(IOResult::Done(false)),
             }
+        } else if self.stack.current_page == -1 {
+            // This can happen in nested left joins. See:
+            // https://github.com/tursodatabase/turso/issues/2924
+            return Ok(IOResult::Done(false));
         }
         loop {
             let mem_page = self.stack.top_ref();
@@ -4202,7 +4206,6 @@ impl BTreeCursor {
         if self.valid_state == CursorValidState::Invalid {
             return Ok(IOResult::Done(false));
         }
-
         loop {
             match self.advance_state {
                 AdvanceState::Start => {
