@@ -1,4 +1,5 @@
 use crate::error::LimboError;
+use crate::storage::checksum::ChecksumContext;
 use crate::storage::encryption::EncryptionContext;
 use crate::{io::Completion, Buffer, CompletionError, Result};
 use std::sync::Arc;
@@ -7,7 +8,7 @@ use tracing::{instrument, Level};
 #[derive(Clone)]
 pub enum EncryptionOrChecksum {
     Encryption(EncryptionContext),
-    Checksum,
+    Checksum(ChecksumContext),
     None,
 }
 
@@ -24,15 +25,31 @@ impl IOContext {
         }
     }
 
+    pub fn get_reserved_space_bytes(&self) -> u8 {
+        match &self.encryption_or_checksum {
+            EncryptionOrChecksum::Encryption(ctx) => ctx.required_reserved_bytes(),
+            EncryptionOrChecksum::Checksum(ctx) => ctx.required_reserved_bytes(),
+            EncryptionOrChecksum::None => Default::default(),
+        }
+    }
+
     pub fn set_encryption(&mut self, encryption_ctx: EncryptionContext) {
         self.encryption_or_checksum = EncryptionOrChecksum::Encryption(encryption_ctx);
+    }
+
+    pub fn encryption_or_checksum(&self) -> &EncryptionOrChecksum {
+        &self.encryption_or_checksum
+    }
+
+    pub fn reset_checksum(&mut self) {
+        self.encryption_or_checksum = EncryptionOrChecksum::None;
     }
 }
 
 impl Default for IOContext {
     fn default() -> Self {
         Self {
-            encryption_or_checksum: EncryptionOrChecksum::None,
+            encryption_or_checksum: EncryptionOrChecksum::Checksum(ChecksumContext::default()),
         }
     }
 }
