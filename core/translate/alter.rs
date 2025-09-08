@@ -141,11 +141,18 @@ pub fn translate_alter_table(
 
                         let record = program.alloc_register();
 
+                        let affinity_str = btree
+                            .columns
+                            .iter()
+                            .map(|col| col.affinity().aff_mask())
+                            .collect::<String>();
+
                         program.emit_insn(Insn::MakeRecord {
                             start_reg: first_column,
                             count: column_count,
                             dest_reg: record,
                             index_name: None,
+                            affinity_str: Some(affinity_str),
                         });
 
                         program.emit_insn(Insn::Insert {
@@ -301,6 +308,7 @@ pub fn translate_alter_table(
                     count: sqlite_schema_column_len,
                     dest_reg: record,
                     index_name: None,
+                    affinity_str: None,
                 });
 
                 program.emit_insn(Insn::Insert {
@@ -442,6 +450,7 @@ pub fn translate_alter_table(
                     count: sqlite_schema_column_len,
                     dest_reg: record,
                     index_name: None,
+                    affinity_str: None,
                 });
 
                 program.emit_insn(Insn::Insert {

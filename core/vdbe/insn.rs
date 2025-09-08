@@ -430,6 +430,7 @@ pub enum Insn {
         count: usize,     // P2
         dest_reg: usize,  // P3
         index_name: Option<String>,
+        affinity_str: Option<String>,
     },
 
     /// Emit a row of results.

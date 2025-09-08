@@ -103,6 +103,7 @@ pub fn emit_result_row_and_limit(
                     count: plan.result_columns.len(),
                     dest_reg: record_reg,
                     index_name: Some(dedupe_index.name.clone()),
+                    affinity_str: None,
                 });
                 program.emit_insn(Insn::IdxInsert {
                     cursor_id: *index_cursor_id,
@@ -124,6 +125,7 @@ pub fn emit_result_row_and_limit(
                     count: plan.result_columns.len() - 1,
                     dest_reg: record_reg,
                     index_name: Some(table.name.clone()),
+                    affinity_str: None,
                 });
             }
             program.emit_insn(Insn::Insert {

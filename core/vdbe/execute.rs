@@ -1864,10 +1864,27 @@ pub fn op_make_record(
             start_reg,
             count,
             dest_reg,
+            affinity_str,
             ..
         },
         insn
     );
+
+    if let Some(affinity_str) = affinity_str {
+        if affinity_str.len() != *count {
+            return Err(LimboError::InternalError(format!(
+                "MakeRecord: the length of affinity string ({}) does not match the count ({})",
+                affinity_str.len(),
+                *count
+            )));
+        }
+        for (i, affinity_ch) in affinity_str.chars().enumerate().take(*count) {
+            let reg_index = *start_reg + i;
+            let affinity = Affinity::from_char(affinity_ch);
+            apply_affinity_char(&mut state.registers[reg_index], affinity);
+        }
+    }
+
     let record = make_record(&state.registers, start_reg, count);
     state.registers[*dest_reg] = Register::Record(record);
     state.pc += 1;
@@ -8502,15 +8519,19 @@ fn apply_affinity_char(target: &mut Register, affinity: Affinity) -> bool {
                 }
 
                 if let Value::Text(t) = value {
-                    let text = t.as_str();
+                    let text = t.as_str().trim();
 
                     // Handle hex numbers - they shouldn't be converted
                     if text.starts_with("0x") {
                         return false;
                     }
 
-                    // Try to parse as number (similar to applyNumericAffinity)
-                    let Ok(num) = checked_cast_text_to_numeric(text) else {
+                    // For affinity conversion, only convert strings that are entirely numeric
+                    let num = if let Ok(i) = text.parse::<i64>() {
+                        Value::Integer(i)
+                    } else if let Ok(f) = text.parse::<f64>() {
+                        Value::Float(f)
+                    } else {
                         return false;
                     };
 

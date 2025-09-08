@@ -1429,6 +1429,7 @@ fn emit_autoindex(
         count: num_regs_to_reserve,
         dest_reg: record_reg,
         index_name: Some(index.name.clone()),
+        affinity_str: None,
     });
     program.emit_insn(Insn::IdxInsert {
         cursor_id: index_cursor_id,

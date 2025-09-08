@@ -524,6 +524,7 @@ fn read_intersect_rows(
             count: column_count,
             dest_reg: row_content_reg,
             index_name: None,
+            affinity_str: None,
         });
         program.emit_insn(Insn::IdxInsert {
             cursor_id: target_cursor_id,

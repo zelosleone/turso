@@ -264,6 +264,7 @@ impl DistinctCtx {
             count: num_regs,
             dest_reg: record_reg,
             index_name: Some(self.ephemeral_index_name.to_string()),
+            affinity_str: None,
         });
         program.emit_insn(Insn::IdxInsert {
             cursor_id: self.cursor_id,
