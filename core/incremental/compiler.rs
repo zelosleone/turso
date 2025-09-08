@@ -5,7 +5,7 @@
 //!
 //! Based on the DBSP paper: "DBSP: Automatic Incremental View Maintenance for Rich Query Languages"
 
-use crate::incremental::dbsp::Delta;
+use crate::incremental::dbsp::{Delta, DeltaPair};
 use crate::incremental::expr_compiler::CompiledExpression;
 use crate::incremental::operator::{
     EvalState, FilterOperator, FilterPredicate, IncrementalOperator, InputOperator, ProjectOperator,
@@ -231,13 +231,13 @@ impl DbspNode {
         };
 
         let state = if commit_operators {
-            // Clone the delta from eval_state - don't extract it
+            // Clone the deltas from eval_state - don't extract them
             // in case we need to re-execute due to I/O
-            let delta = match eval_state {
-                EvalState::Init { delta } => delta.clone(),
+            let deltas = match eval_state {
+                EvalState::Init { deltas } => deltas.clone(),
                 _ => panic!("commit can only be called when eval_state is in Init state"),
             };
-            let result = return_if_io!(op.commit(delta, cursor));
+            let result = return_if_io!(op.commit(deltas, cursor));
             // After successful commit, move state to Done
             *eval_state = EvalState::Done;
             result
@@ -518,7 +518,9 @@ impl DbspCircuit {
                             // Input nodes get their delta directly from input_data
                             let delta = input_data.get(name);
                             *execute_state = ExecuteState::ProcessingNode {
-                                eval_state: Box::new(EvalState::Init { delta }),
+                                eval_state: Box::new(EvalState::Init {
+                                    deltas: delta.into(),
+                                }),
                             };
                         }
                         _ => {
@@ -552,22 +554,14 @@ impl DbspCircuit {
                     input_deltas,
                 } => {
                     if *current_index >= input_states.len() {
-                        // All inputs processed, check we have exactly one delta
-                        // (Input nodes never reach here since they go straight to ProcessingNode)
-                        let delta = if input_deltas.is_empty() {
-                            return Err(LimboError::InternalError(
-                                "execute() cannot be called without a Delta".to_string(),
-                            ));
-                        } else if input_deltas.len() > 1 {
-                            return Err(LimboError::InternalError(
-                                format!("Until joins are supported, only one delta is expected. Got {} deltas", input_deltas.len()),
-                            ));
-                        } else {
-                            input_deltas[0].clone()
-                        };
+                        // All inputs processed
+                        let left_delta = input_deltas.first().cloned().unwrap_or_else(Delta::new);
+                        let right_delta = input_deltas.get(1).cloned().unwrap_or_else(Delta::new);
 
                         *execute_state = ExecuteState::ProcessingNode {
-                            eval_state: Box::new(EvalState::Init { delta }),
+                            eval_state: Box::new(EvalState::Init {
+                                deltas: DeltaPair::new(left_delta, right_delta),
+                            }),
                         };
                     } else {
                         // Get the (node_id, state) pair for the current index

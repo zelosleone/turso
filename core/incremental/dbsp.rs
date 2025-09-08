@@ -167,6 +167,40 @@ impl Delta {
     }
 }
 
+/// A pair of deltas for operators that process two inputs
+#[derive(Debug, Clone)]
+pub struct DeltaPair {
+    pub left: Delta,
+    pub right: Delta,
+}
+
+impl DeltaPair {
+    /// Create a new delta pair
+    pub fn new(left: Delta, right: Delta) -> Self {
+        Self { left, right }
+    }
+}
+
+impl From<Delta> for DeltaPair {
+    /// Convert a single delta into a delta pair with empty right delta
+    fn from(delta: Delta) -> Self {
+        Self {
+            left: delta,
+            right: Delta::new(),
+        }
+    }
+}
+
+impl From<&Delta> for DeltaPair {
+    /// Convert a delta reference into a delta pair with empty right delta
+    fn from(delta: &Delta) -> Self {
+        Self {
+            left: delta.clone(),
+            right: Delta::new(),
+        }
+    }
+}
+
 /// A simplified ZSet for incremental computation
 /// Each element has a weight: positive for additions, negative for deletions
 #[derive(Clone, Debug, Default)]
