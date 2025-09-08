@@ -1435,6 +1435,107 @@ mod tests {
             }
         }
     }
+
+    #[test]
+    pub fn affinity_fuzz() {
+        let _ = env_logger::try_init();
+
+        let (mut rng, seed) = rng_from_time();
+        log::info!("affinity_fuzz seed: {seed}");
+
+        for iteration in 0..500 {
+            let db = TempDatabase::new_empty(false);
+            let limbo_conn = db.connect_limbo();
+            let sqlite_conn = rusqlite::Connection::open_in_memory().unwrap();
+
+            // Test different column affinities - cover all SQLite affinity types
+            let affinities = [
+                "INTEGER",
+                "TEXT",
+                "REAL",
+                "NUMERIC",
+                "BLOB",
+                "INT",
+                "TINYINT",
+                "SMALLINT",
+                "MEDIUMINT",
+                "BIGINT",
+                "UNSIGNED BIG INT",
+                "INT2",
+                "INT8",
+                "CHARACTER(20)",
+                "VARCHAR(255)",
+                "VARYING CHARACTER(255)",
+                "NCHAR(55)",
+                "NATIVE CHARACTER(70)",
+                "NVARCHAR(100)",
+                "CLOB",
+                "DOUBLE",
+                "DOUBLE PRECISION",
+                "FLOAT",
+                "DECIMAL(10,5)",
+                "BOOLEAN",
+                "DATE",
+                "DATETIME",
+            ];
+            let affinity = affinities[rng.random_range(0..affinities.len())];
+
+            let create_table = format!("CREATE TABLE t (x {affinity})");
+            limbo_exec_rows(&db, &limbo_conn, &create_table);
+            sqlite_exec_rows(&sqlite_conn, &create_table);
+
+            // Insert various values that test affinity conversion rules
+            let mut values = Vec::new();
+            for _ in 0..20 {
+                let value = match rng.random_range(0..9) {
+                    0 => format!("'{}'", rng.random_range(-10000..10000)), // Pure integer as text
+                    1 => format!(
+                        "'{}.{}'",
+                        rng.random_range(-1000..1000),
+                        rng.random_range(1..999) // Ensure non-zero decimal part
+                    ), // Float as text with decimal
+                    2 => format!("'a{}'", rng.random_range(0..1000)), // Text with integer suffix
+                    3 => format!("'  {}  '", rng.random_range(-100..100)), // Integer with whitespace
+                    4 => format!("'-{}'", rng.random_range(1..1000)), // Negative integer as text
+                    5 => format!("{}", rng.random_range(-10000..10000)), // Direct integer
+                    6 => format!(
+                        "{}.{}",
+                        rng.random_range(-100..100),
+                        rng.random_range(1..999) // Ensure non-zero decimal part
+                    ), // Direct float
+                    7 => "'text_value'".to_string(), // Pure text that won't convert
+                    8 => "NULL".to_string(),         // NULL value
+                    _ => unreachable!(),
+                };
+                values.push(format!("({value})"));
+            }
+
+            let insert = format!("INSERT INTO t VALUES {}", values.join(","));
+            limbo_exec_rows(&db, &limbo_conn, &insert);
+            sqlite_exec_rows(&sqlite_conn, &insert);
+
+            // Query values and their types to verify affinity rules are applied correctly
+            let query = "SELECT x, typeof(x) FROM t";
+            let limbo_result = limbo_exec_rows(&db, &limbo_conn, query);
+            let sqlite_result = sqlite_exec_rows(&sqlite_conn, query);
+
+            assert_eq!(
+                limbo_result, sqlite_result,
+                "iteration: {iteration}, seed: {seed}, affinity: {affinity}, values: {values:?}"
+            );
+
+            // Also test with ORDER BY to ensure affinity affects sorting
+            let query_ordered = "SELECT x FROM t ORDER BY x";
+            let limbo_ordered = limbo_exec_rows(&db, &limbo_conn, query_ordered);
+            let sqlite_ordered = sqlite_exec_rows(&sqlite_conn, query_ordered);
+
+            assert_eq!(
+                limbo_ordered, sqlite_ordered,
+                "ORDER BY failed - iteration: {iteration}, seed: {seed}, affinity: {affinity}"
+            );
+        }
+    }
+
     #[test]
     // Simple fuzz test for SUM with floats
     pub fn sum_agg_fuzz_floats() {
