@@ -2243,7 +2243,7 @@ impl BTreeCursor {
                                     tracing::debug!("TableLeafCell: found exact match with cell_idx={cell_idx}, overwriting");
                                     self.has_record.set(true);
                                     *write_state = WriteState::Overwrite {
-                                        page: page,
+                                        page,
                                         cell_idx,
                                         state: Some(OverwriteCellState::AllocatePayload),
                                     };
@@ -2267,7 +2267,7 @@ impl BTreeCursor {
                                         panic!("expected write state");
                                     };
                                     *write_state = WriteState::Overwrite {
-                                        page: page,
+                                        page,
                                         cell_idx,
                                         state: Some(OverwriteCellState::AllocatePayload),
                                     };
@@ -2287,7 +2287,7 @@ impl BTreeCursor {
                         panic!("expected write state");
                     };
                     *write_state = WriteState::Insert {
-                        page: page,
+                        page,
                         cell_idx,
                         new_payload: Vec::with_capacity(record_values.len() + 4),
                         fill_cell_payload_state: FillCellPayloadState::Start,
@@ -2353,7 +2353,7 @@ impl BTreeCursor {
                             panic!("expected write state");
                         };
                         *write_state = WriteState::Overwrite {
-                            page: page,
+                            page,
                             cell_idx,
                             state: Some(state),
                         };
@@ -2536,7 +2536,7 @@ impl BTreeCursor {
                             overflow_cell.index
                         );
                     }
-                    self.pager.add_dirty(&parent_page);
+                    self.pager.add_dirty(parent_page);
                     let parent_contents = parent_page.get_contents();
                     let page_to_balance_idx = self.stack.current_cell_index() as usize;
 
