@@ -3,9 +3,8 @@
 // Based on Feldera DBSP design but adapted for Turso's architecture
 
 use crate::function::{AggFunc, Func};
-use crate::incremental::dbsp::Delta;
+use crate::incremental::dbsp::{Delta, HashableRow};
 use crate::incremental::expr_compiler::CompiledExpression;
-use crate::incremental::hashable_row::HashableRow;
 use crate::incremental::persistence::{ReadRecord, WriteRow};
 use crate::storage::btree::BTreeCursor;
 use crate::types::{IOResult, SeekKey, Text};
@@ -210,7 +209,7 @@ impl ComputationTracker {
 }
 
 #[cfg(test)]
-mod hashable_row_tests {
+mod dbsp_types_tests {
     use super::*;
 
     #[test]

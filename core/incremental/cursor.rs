@@ -1,8 +1,7 @@
 use crate::{
     incremental::{
         compiler::{DeltaSet, ExecuteState},
-        dbsp::{Delta, RowKeyZSet},
-        hashable_row::HashableRow,
+        dbsp::{Delta, HashableRow, RowKeyZSet},
         view::{IncrementalView, ViewTransactionState},
     },
     return_if_io,
