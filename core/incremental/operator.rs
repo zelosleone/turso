@@ -6,8 +6,9 @@ use crate::function::{AggFunc, Func};
 use crate::incremental::dbsp::Delta;
 use crate::incremental::expr_compiler::CompiledExpression;
 use crate::incremental::hashable_row::HashableRow;
-use crate::storage::btree::{BTreeCursor, BTreeKey};
-use crate::types::{IOResult, SeekKey, SeekOp, SeekResult, Text};
+use crate::incremental::persistence::{ReadRecord, WriteRow};
+use crate::storage::btree::BTreeCursor;
+use crate::types::{IOResult, SeekKey, Text};
 use crate::{
     return_and_restore_if_io, return_if_io, Connection, Database, Result, SymbolTable, Value,
 };
@@ -16,160 +17,6 @@ use std::fmt::{self, Debug, Display};
 use std::sync::{Arc, Mutex};
 use turso_macros::match_ignore_ascii_case;
 use turso_parser::ast::{As, Expr, Literal, Name, OneSelect, Operator, ResultColumn};
-
-#[derive(Debug)]
-pub enum ReadRecord {
-    GetRecord,
-    Done { state: Option<AggregateState> },
-}
-
-impl ReadRecord {
-    fn new() -> Self {
-        ReadRecord::GetRecord
-    }
-
-    fn read_record(
-        &mut self,
-        key: SeekKey,
-        aggregates: &[AggregateFunction],
-        cursor: &mut BTreeCursor,
-    ) -> Result<IOResult<Option<AggregateState>>> {
-        loop {
-            match self {
-                ReadRecord::GetRecord => {
-                    let res = return_if_io!(cursor.seek(key.clone(), SeekOp::GE { eq_only: true }));
-                    if !matches!(res, SeekResult::Found) {
-                        *self = ReadRecord::Done { state: None };
-                    } else {
-                        let record = return_if_io!(cursor.record());
-                        let r = record.ok_or_else(|| {
-                            crate::LimboError::InternalError(format!(
-                                "Found key {key:?} in aggregate storage but could not read record"
-                            ))
-                        })?;
-                        let values = r.get_values();
-                        let blob = values[1].to_owned();
-
-                        let (state, _group_key) = match blob {
-                            Value::Blob(blob) => AggregateState::from_blob(&blob, aggregates)
-                                .ok_or_else(|| {
-                                    crate::LimboError::InternalError(format!(
-                                        "Cannot deserialize aggregate state {blob:?}",
-                                    ))
-                                }),
-                            _ => Err(crate::LimboError::ParseError(
-                                "Value in aggregator not blob".to_string(),
-                            )),
-                        }?;
-                        *self = ReadRecord::Done { state: Some(state) }
-                    }
-                }
-                ReadRecord::Done { state } => return Ok(IOResult::Done(state.clone())),
-            }
-        }
-    }
-}
-
-#[derive(Debug)]
-pub(crate) enum WriteRecord {
-    GetRecord,
-    Delete { final_weight: isize },
-    Insert { final_weight: isize },
-    Done,
-}
-impl WriteRecord {
-    fn new() -> Self {
-        WriteRecord::GetRecord
-    }
-
-    fn write_record(
-        &mut self,
-        key: SeekKey,
-        record: HashableRow,
-        weight: isize,
-        cursor: &mut BTreeCursor,
-    ) -> Result<IOResult<()>> {
-        loop {
-            match self {
-                WriteRecord::GetRecord => {
-                    let res = return_if_io!(cursor.seek(key.clone(), SeekOp::GE { eq_only: true }));
-                    if !matches!(res, SeekResult::Found) {
-                        *self = WriteRecord::Insert {
-                            final_weight: weight,
-                        };
-                    } else {
-                        let existing_record = return_if_io!(cursor.record());
-                        let r = existing_record.ok_or_else(|| {
-                            crate::LimboError::InternalError(format!(
-                                "Found key {key:?} in aggregate storage but could not read record"
-                            ))
-                        })?;
-                        let values = r.get_values();
-                        // values[2] should contain the weight
-                        let existing_weight = match values[2].to_owned() {
-                            Value::Integer(w) => w as isize,
-                            _ => {
-                                return Err(crate::LimboError::InternalError(format!(
-                                    "Invalid weight value in aggregate storage for key {key:?}"
-                                )))
-                            }
-                        };
-                        let final_weight = existing_weight + weight;
-                        if final_weight <= 0 {
-                            *self = WriteRecord::Delete { final_weight }
-                        } else {
-                            *self = WriteRecord::Insert { final_weight }
-                        }
-                    }
-                }
-                WriteRecord::Delete { final_weight: _ } => {
-                    let res = return_if_io!(cursor.seek(key.clone(), SeekOp::GE { eq_only: true }));
-                    if !matches!(res, SeekResult::Found) {
-                        return Err(crate::LimboError::InternalError(format!(
-                            "record not found for {key:?}, but we had just GetRecord! Should not be possible"
-                        )));
-                    }
-                    // Done - row was deleted and weights cancel out.
-                    // If we iniated the delete we will complete, so Done has to be set
-                    // before so we don't come back here.
-                    *self = WriteRecord::Done;
-                    return_if_io!(cursor.delete());
-                }
-                WriteRecord::Insert { final_weight } => {
-                    return_if_io!(cursor.seek(key.clone(), SeekOp::GE { eq_only: true }));
-                    // Build the key and insert the record
-                    let key_i64 = match key {
-                        SeekKey::TableRowId(id) => id,
-                        _ => {
-                            return Err(crate::LimboError::InternalError(
-                                "Expected TableRowId for aggregate storage".to_string(),
-                            ))
-                        }
-                    };
-                    // Create the record values: key, blob, weight
-                    let record_values = vec![
-                        Value::Integer(key_i64),
-                        record.values[0].clone(), // The blob with serialized state
-                        Value::Integer(*final_weight as i64),
-                    ];
-
-                    // Create an ImmutableRecord from the values
-                    let immutable_record = crate::types::ImmutableRecord::from_values(
-                        &record_values,
-                        record_values.len(),
-                    );
-                    let btree_key = BTreeKey::new_table_rowid(key_i64, Some(&immutable_record));
-
-                    *self = WriteRecord::Done;
-                    return_if_io!(cursor.insert(&btree_key));
-                }
-                WriteRecord::Done => {
-                    return Ok(IOResult::Done(()));
-                }
-            }
-        }
-    }
-}
 
 type ComputedStates = HashMap<String, (Vec<Value>, AggregateState)>; // group_key_str -> (group_key, state)
 #[derive(Debug)]
@@ -182,7 +29,7 @@ enum AggregateCommitState {
         delta: Delta,
         computed_states: ComputedStates,
         current_idx: usize,
-        write_record: WriteRecord,
+        write_row: WriteRow,
     },
     Done {
         delta: Delta,
@@ -1384,7 +1231,7 @@ impl AggregateState {
 
     /// Deserialize aggregate state from a binary blob
     /// Returns the aggregate state and the group key values
-    fn from_blob(blob: &[u8], aggregates: &[AggregateFunction]) -> Option<(Self, Vec<Value>)> {
+    pub fn from_blob(blob: &[u8], aggregates: &[AggregateFunction]) -> Option<(Self, Vec<Value>)> {
         let mut cursor = 0;
 
         // Check version byte
@@ -1768,14 +1615,14 @@ impl IncrementalOperator for AggregateOperator {
                         delta: output_delta,
                         computed_states,
                         current_idx: 0,
-                        write_record: WriteRecord::new(),
+                        write_row: WriteRow::new(),
                     };
                 }
                 AggregateCommitState::PersistDelta {
                     delta,
                     computed_states,
                     current_idx,
-                    write_record,
+                    write_row,
                 } => {
                     let states_vec: Vec<_> = computed_states.iter().collect();
 
@@ -1795,10 +1642,25 @@ impl IncrementalOperator for AggregateOperator {
                         let state_blob = agg_state.to_blob(&self.aggregates, group_key);
                         let blob_row = HashableRow::new(0, vec![Value::Blob(state_blob)]);
 
+                        // Build the aggregate storage format: [key, blob, weight]
+                        let seek_key_clone = seek_key.clone();
+                        let blob_value = blob_row.values[0].clone();
+                        let build_fn = move |final_weight: isize| -> Vec<Value> {
+                            let key_i64 = match seek_key_clone.clone() {
+                                SeekKey::TableRowId(id) => id,
+                                _ => panic!("Expected TableRowId"),
+                            };
+                            vec![
+                                Value::Integer(key_i64),
+                                blob_value.clone(), // The blob with serialized state
+                                Value::Integer(final_weight as i64),
+                            ]
+                        };
+
                         return_and_restore_if_io!(
                             &mut self.commit_state,
                             state,
-                            write_record.write_record(seek_key, blob_row, weight, cursor)
+                            write_row.write_row(cursor, seek_key, build_fn, weight)
                         );
 
                         let delta = std::mem::take(delta);
@@ -1808,7 +1670,7 @@ impl IncrementalOperator for AggregateOperator {
                             delta,
                             computed_states,
                             current_idx: *current_idx + 1,
-                            write_record: WriteRecord::new(), // Reset for next write
+                            write_row: WriteRow::new(), // Reset for next write
                         };
                     }
                 }
