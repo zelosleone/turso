@@ -27,7 +27,7 @@ impl ChecksumContext {
         Ok(())
     }
 
-    pub fn verify_and_strip_checksum(
+    pub fn verify_checksum(
         &self,
         page: &mut [u8],
         page_id: usize,
@@ -113,7 +113,7 @@ mod tests {
 
         ctx.add_checksum_to_page(&mut page, 2).unwrap();
 
-        let result = ctx.verify_and_strip_checksum(&mut page, 2);
+        let result = ctx.verify_checksum(&mut page, 2);
         assert!(result.is_ok());
     }
 
@@ -127,7 +127,7 @@ mod tests {
         // corrupt the data to cause checksum mismatch
         page[0] = 255;
 
-        let result = ctx.verify_and_strip_checksum(&mut page, 2);
+        let result = ctx.verify_checksum(&mut page, 2);
         assert!(result.is_err());
         match result.unwrap_err() {
             CompletionError::ChecksumMismatch {
@@ -152,7 +152,7 @@ mod tests {
         // corrupt the checksum itself
         page[CHECKSUM_PAGE_SIZE - 1] = 255;
 
-        let result = ctx.verify_and_strip_checksum(&mut page, 2);
+        let result = ctx.verify_checksum(&mut page, 2);
         assert!(result.is_err());
 
         match result.unwrap_err() {

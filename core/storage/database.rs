@@ -162,7 +162,7 @@ impl DatabaseStorage for DatabaseFile {
                             original_c.complete(bytes_read);
                             return;
                         }
-                        match checksum_ctx.verify_and_strip_checksum(buf.as_mut_slice(), page_idx) {
+                        match checksum_ctx.verify_checksum(buf.as_mut_slice(), page_idx) {
                             Ok(_) => {
                                 original_c.complete(bytes_read);
                             }
