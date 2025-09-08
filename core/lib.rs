@@ -580,6 +580,13 @@ impl Database {
     }
 
     fn init_pager(&self, requested_page_size: Option<usize>) -> Result<Pager> {
+        let reserved_bytes = self.maybe_get_reserved_space_bytes()?;
+        let disable_checksums = if let Some(reserved_bytes) = reserved_bytes {
+            // if the required reserved bytes for checksums is not present, disable checksums
+            reserved_bytes != CHECKSUM_REQUIRED_RESERVED_BYTES
+        } else {
+            false
+        };
         // Check if WAL is enabled
         let shared_wal = self.shared_wal.read();
         if shared_wal.enabled.load(Ordering::Relaxed) {
@@ -607,6 +614,12 @@ impl Database {
                 self.init_lock.clone(),
             )?;
             pager.page_size.set(Some(page_size));
+            if let Some(reserved_bytes) = reserved_bytes {
+                pager.set_reserved_space_bytes(reserved_bytes);
+            }
+            if disable_checksums {
+                pager.reset_checksum_context();
+            }
             return Ok(pager);
         }
         let page_size = self.determine_actual_page_size(&shared_wal, requested_page_size)?;
@@ -631,6 +644,12 @@ impl Database {
         )?;
 
         pager.page_size.set(Some(page_size));
+        if let Some(reserved_bytes) = reserved_bytes {
+            pager.set_reserved_space_bytes(reserved_bytes);
+        }
+        if disable_checksums {
+            pager.reset_checksum_context();
+        }
         let file = self
             .io
             .open_file(&self.wal_path, OpenFlags::Create, false)?;
