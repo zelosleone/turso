@@ -8519,15 +8519,19 @@ fn apply_affinity_char(target: &mut Register, affinity: Affinity) -> bool {
                 }
 
                 if let Value::Text(t) = value {
-                    let text = t.as_str();
+                    let text = t.as_str().trim();
 
                     // Handle hex numbers - they shouldn't be converted
                     if text.starts_with("0x") {
                         return false;
                     }
 
-                    // Try to parse as number (similar to applyNumericAffinity)
-                    let Ok(num) = checked_cast_text_to_numeric(text) else {
+                    // For affinity conversion, only convert strings that are entirely numeric
+                    let num = if let Ok(i) = text.parse::<i64>() {
+                        Value::Integer(i)
+                    } else if let Ok(f) = text.parse::<f64>() {
+                        Value::Float(f)
+                    } else {
                         return false;
                     };
 
