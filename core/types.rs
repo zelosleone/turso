@@ -706,8 +706,12 @@ impl PartialOrd<Value> for Value {
     fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
         match (self, other) {
             (Self::Integer(int_left), Self::Integer(int_right)) => int_left.partial_cmp(int_right),
-            (Self::Float(float), Self::Integer(int)) => Some(int_float_cmp(*int, *float).reverse()),
-            (Self::Integer(int), Self::Float(float)) => Some(int_float_cmp(*int, *float)),
+            (Self::Float(float), Self::Integer(int)) => {
+                Some(sqlite_int_float_compare(*int, *float).reverse())
+            }
+            (Self::Integer(int), Self::Float(float)) => {
+                Some(sqlite_int_float_compare(*int, *float))
+            }
             (Self::Float(float_left), Self::Float(float_right)) => {
                 float_left.partial_cmp(float_right)
             }
