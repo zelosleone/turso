@@ -1381,9 +1381,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore]
-    /// Ignored because of https://github.com/tursodatabase/turso/issues/2040, https://github.com/tursodatabase/turso/issues/2041
-    /// TODO: add fuzzing for other aggregate functions
     pub fn min_max_agg_fuzz() {
         let _ = env_logger::try_init();
 
