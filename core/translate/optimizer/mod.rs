@@ -339,14 +339,29 @@ fn optimize_table_access(
                         )?,
                     });
                 } else {
+                    let is_outer_join = joined_tables[table_idx]
+                        .join_info
+                        .as_ref()
+                        .is_some_and(|join_info| join_info.outer);
                     for cref in constraint_refs.iter() {
                         let constraint =
                             &constraints_per_table[table_idx].constraints[cref.constraint_vec_pos];
+                        let where_term = &mut where_clause[constraint.where_clause_pos.0];
                         assert!(
-                            !where_clause[constraint.where_clause_pos.0].consumed,
-                            "trying to consume a where clause term twice: {:?}",
-                            where_clause[constraint.where_clause_pos.0]
+                            !where_term.consumed,
+                            "trying to consume a where clause term twice: {where_term:?}",
                         );
+                        if is_outer_join && where_term.from_outer_join.is_none() {
+                            // Don't consume WHERE terms from outer joins if the where term is not part of the outer join condition. Consider:
+                            // - SELECT * FROM t1 LEFT JOIN t2 ON false WHERE t2.id = 5
+                            // - there is no row in t2 where t2.id = 5
+                            // This should never produce any rows with null columns for t2 (because NULL != 5), but if we consume 't2.id = 5' to use it as a seek key,
+                            // this will cause a null row to be emitted for EVERY row of t1.
+                            // Note: in most cases like this, the LEFT JOIN could just be converted into an INNER JOIN (because e.g. t2.id=5 statically excludes any null rows),
+                            // but that optimization should not be done here - it should be done before the join order optimization happens.
+                            continue;
+                        }
+
                         where_clause[constraint.where_clause_pos.0].consumed = true;
                     }
                     if let Some(index) = &index {
