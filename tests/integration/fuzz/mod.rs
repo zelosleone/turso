@@ -515,7 +515,7 @@ mod tests {
         let (mut rng, seed) = rng_from_time();
         println!("index_scan_single_key_mutation_fuzz seed: {seed}");
 
-        const OUTER_ITERATIONS: usize = 30;
+        const OUTER_ITERATIONS: usize = 100;
         for i in 0..OUTER_ITERATIONS {
             println!(
                 "table_index_mutation_fuzz iteration {}/{}",
@@ -580,7 +580,7 @@ mod tests {
             limbo_exec_rows(&limbo_db, &limbo_conn, &insert);
 
             const COMPARISONS: [&str; 3] = ["=", "<", ">"];
-            const INNER_ITERATIONS: usize = 100;
+            const INNER_ITERATIONS: usize = 20;
 
             for _ in 0..INNER_ITERATIONS {
                 let do_update = rng.random_range(0..2) == 0;
@@ -590,11 +590,23 @@ mod tests {
                 let predicate_col = rng.random_range(0..num_cols);
                 let predicate_value = rng.random_range(0..1000);
 
+                let omit_where = rng.random_bool(0.05);
+
                 let query = if do_update {
                     let new_y = rng.random_range(0..1000);
-                    format!("UPDATE t SET c{affected_col} = {new_y} WHERE c{predicate_col} {comparison} {predicate_value}")
+                    if omit_where {
+                        format!("UPDATE t SET c{affected_col} = {new_y}")
+                    } else {
+                        format!("UPDATE t SET c{affected_col} = {new_y} WHERE c{predicate_col} {comparison} {predicate_value}")
+                    }
                 } else {
-                    format!("DELETE FROM t WHERE c{predicate_col} {comparison} {predicate_value}")
+                    if omit_where {
+                        "DELETE FROM t".to_string()
+                    } else {
+                        format!(
+                            "DELETE FROM t WHERE c{predicate_col} {comparison} {predicate_value}"
+                        )
+                    }
                 };
 
                 dml_statements.push(query.clone());
