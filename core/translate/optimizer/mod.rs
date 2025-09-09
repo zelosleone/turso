@@ -190,6 +190,34 @@ fn optimize_table_access(
     let maybe_order_target = compute_order_target(order_by, group_by.as_mut());
     let constraints_per_table =
         constraints_from_where_clause(where_clause, table_references, available_indexes)?;
+
+    // Currently the expressions we evaluate as constraints are binary expressions that will never be true for a NULL operand.
+    // If there are any constraints on the right hand side table of an outer join that are not part of the outer join condition,
+    // the outer join can be converted into an inner join.
+    // for example:
+    // - SELECT * FROM t1 LEFT JOIN t2 ON false WHERE t2.id = 5
+    // there can never be a situation where null columns are emitted for t2 because t2.id = 5 will never be true in that case.
+    // hence: we can convert the outer join into an inner join.
+    for (i, t) in table_references
+        .joined_tables_mut()
+        .iter_mut()
+        .enumerate()
+        .filter(|(_, t)| {
+            t.join_info
+                .as_ref()
+                .is_some_and(|join_info| join_info.outer)
+        })
+    {
+        if constraints_per_table[i]
+            .constraints
+            .iter()
+            .any(|c| where_clause[c.where_clause_pos.0].from_outer_join.is_none())
+        {
+            t.join_info.as_mut().unwrap().outer = false;
+            continue;
+        }
+    }
+
     let Some(best_join_order_result) = compute_best_join_order(
         table_references.joined_tables_mut(),
         maybe_order_target.as_ref(),
