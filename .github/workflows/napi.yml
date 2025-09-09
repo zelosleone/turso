@@ -137,11 +137,11 @@ jobs:
         run: yarn install
       - name: Build common
         run: yarn workspace @tursodatabase/database-common build
-      - name: Download artifacts
+      - name: Download all artifacts
         uses: actions/download-artifact@v4
         with:
-          name: bindings-x86_64-unknown-linux-gnu
-          path: bindings/javascript/packages/native
+          path: bindings/javascript/packages
+          merge-multiple: true
       - name: List packages
         run: ls -R .
         shell: bash
@@ -161,16 +161,11 @@ jobs:
         uses: useblacksmith/setup-node@v5
         with:
           node-version: 20
-      - name: Download native artifacts
+      - name: Download all artifacts
         uses: actions/download-artifact@v4
         with:
-          path: bindings/javascript/packages/native
-          pattern: '*.node'
-      - name: Download browser artifacts
-        uses: actions/download-artifact@v4
-        with:
-          path: bindings/javascript/packages/browser
-          pattern: '*.wasm'
+          path: bindings/javascript/packages
+          merge-multiple: true
       - name: Install dependencies
         run: yarn install
       - name: Install dependencies
