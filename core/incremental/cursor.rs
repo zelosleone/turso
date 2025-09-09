@@ -147,9 +147,9 @@ impl MaterializedViewCursor {
             }
         };
 
-        if !(-1..=1).contains(&weight) {
+        if weight <= 0 {
             return Err(crate::LimboError::InternalError(format!(
-                "Invalid data in materialized view: expected weight -1, 0, or 1, found {weight}"
+                "Invalid data in materialized view: expected a positive weight, found {weight}"
             )));
         }
 
