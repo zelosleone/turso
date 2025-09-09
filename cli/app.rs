@@ -484,7 +484,7 @@ impl Limbo {
     }
 
     // consume will consume `input_buff`
-    pub fn consume(&mut self) -> anyhow::Result<()> {
+    pub fn consume(&mut self, flush: bool) -> anyhow::Result<()> {
         if self.input_buff.trim().is_empty() {
             return Ok(());
         }
@@ -500,6 +500,10 @@ impl Limbo {
                 self.reset_input();
             }
             (false, true) => {
+                self.run_query(value);
+                self.reset_input();
+            }
+            (false, false) if flush => {
                 self.run_query(value);
                 self.reset_input();
             }
