@@ -27,22 +27,25 @@ jobs:
       matrix:
         settings:
           - host: windows-latest
-            build: |
-              yarn build --target x86_64-pc-windows-msvc
-              yarn test
             target: x86_64-pc-windows-msvc
+            directory: bindings/javascript/packages/native
+            build: yarn workspace @tursodatabase/database napi-build --target x86_64-pc-windows-msvc
           - host: ubuntu-latest
             target: x86_64-unknown-linux-gnu
             docker: ghcr.io/napi-rs/napi-rs/nodejs-rust:lts-debian
-            build: yarn build --target x86_64-unknown-linux-gnu
+            directory: bindings/javascript/packages/native
+            build: yarn workspace @tursodatabase/database napi-build --target x86_64-unknown-linux-gnu
           - host: macos-latest
             target: aarch64-apple-darwin
-            build: yarn build --target aarch64-apple-darwin
+            directory: bindings/javascript/packages/native
+            build: yarn workspace @tursodatabase/database napi-build --target aarch64-apple-darwin
           - host: blacksmith-2vcpu-ubuntu-2404-arm
             target: aarch64-unknown-linux-gnu
-            build: yarn build --target aarch64-unknown-linux-gnu
+            directory: bindings/javascript/packages/native
+            build: yarn workspace @tursodatabase/database napi-build --target aarch64-unknown-linux-gnu
           - host: ubuntu-latest
             target: wasm32-wasip1-threads
+            directory: bindings/javascript/packages/browser
             setup: |
               rustup target add wasm32-wasip1-threads
               wget https://github.com/WebAssembly/wasi-sdk/releases/download/wasi-sdk-25/wasi-sdk-25.0-x86_64-linux.tar.gz
@@ -52,7 +55,7 @@ jobs:
               export CMAKE_BUILD_PARALLEL_LEVEL=$(nproc)
               export TARGET_CXXFLAGS="--target=wasm32-wasi-threads --sysroot=$(pwd)/wasi-sdk-25.0-x86_64-linux/share/wasi-sysroot -pthread -mllvm -wasm-enable-sjlj -lsetjmp"
               export TARGET_CFLAGS="$TARGET_CXXFLAGS"
-              yarn build --target wasm32-wasip1-threads
+              yarn workspace @tursodatabase/database-browser build
     name: stable - ${{ matrix.settings.target }} - node@20
     runs-on: ${{ matrix.settings.host }}
     steps:
@@ -88,6 +91,8 @@ jobs:
         shell: bash
       - name: Install dependencies
         run: yarn install
+      - name: Build core
+        run: yarn workspace @tursodatabase/database-core build
       - name: Setup node x86
         uses: actions/setup-node@v4
         if: matrix.settings.target == 'x86_64-pc-windows-msvc'
@@ -110,9 +115,10 @@ jobs:
         with:
           name: bindings-${{ matrix.settings.target }}
           path: |
-            bindings/javascript/${{ env.APP_NAME }}.*.node
-            bindings/javascript/${{ env.APP_NAME }}.*.wasm
+            ${{ env.APP_NAME }}.*.node
+            ${{ env.APP_NAME }}.*.wasm
           if-no-files-found: error
+        working-directory: ${{ matrix.settings.directory }}
   test-linux-x64-gnu-binding:
     name: Test bindings on Linux-x64-gnu - node@${{ matrix.node }}
     needs:
@@ -131,16 +137,18 @@ jobs:
           node-version: ${{ matrix.node }}
       - name: Install dependencies
         run: yarn install
+      - name: Install dependencies
+        run: yarn build
       - name: Download artifacts
         uses: actions/download-artifact@v4
         with:
           name: bindings-x86_64-unknown-linux-gnu
-          path: bindings/javascript
+          path: bindings/javascript/packages/native
       - name: List packages
         run: ls -R .
         shell: bash
       - name: Test bindings
-        run: docker run --rm -v $(pwd):/build -w /build node:${{ matrix.node }}-slim yarn test
+        run: docker run --rm -v $(pwd):/build -w /build node:${{ matrix.node }}-slim yarn workspace @tursodatabase/database test
   publish:
     name: Publish
     runs-on: ubuntu-latest
@@ -156,34 +164,33 @@ jobs:
         uses: useblacksmith/setup-node@v5
         with:
           node-version: 20
-      - name: Install dependencies
-        run: yarn install
-      - name: create npm dirs
-        run: yarn napi create-npm-dirs
-      - name: Download all artifacts
+      - name: Download node artifacts
         uses: actions/download-artifact@v4
         with:
-          path: bindings/javascript/artifacts
-      - name: Move artifacts
-        run: yarn artifacts
-      - name: List packages
-        run: ls -R ./npm
-        shell: bash
+          path: bindings/javascript/packages/native
+          pattern: '*.node'
+      - name: Download WASM artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: bindings/javascript/packages/browser
+          pattern: '*.wasm'
+      - name: Install dependencies
+        run: yarn install
+      - name: Install dependencies
+        run: yarn tsc-build
       - name: Publish
         run: |
           npm config set provenance true
           if git log -1 --pretty=%B | grep "^Turso [0-9]\+\.[0-9]\+\.[0-9]\+$";
           then
             echo "//registry.npmjs.org/:_authToken=$NPM_TOKEN" >> ~/.npmrc
-            make publish-native
-            make publish-browser
+            npm publish --access public
           elif git log -1 --pretty=%B | grep "^Turso [0-9]\+\.[0-9]\+\.[0-9]\+";
           then
             echo "//registry.npmjs.org/:_authToken=$NPM_TOKEN" >> ~/.npmrc
-            make publish-native-next
-            make publish-browser-next
+            npm publish --access public --tag next
           else
-            echo "Not a release, skipping publish"
+            npm publish --dry-run
           fi
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
