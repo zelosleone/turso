@@ -543,7 +543,8 @@ pub struct BTreeCursor {
     seek_end_state: SeekEndState,
     /// State machine for [BTreeCursor::move_to]
     move_to_state: MoveToState,
-    /// Whether the next call to [BTreeCursor::next()] should be a no-op
+    /// Whether the next call to [BTreeCursor::next()] should be a no-op.
+    /// This is currently only used after a delete operation causes a rebalancing.
     skip_advance: Cell<bool>,
 }
 
@@ -4285,6 +4286,7 @@ impl BTreeCursor {
             return Ok(IOResult::Done(false));
         }
         if self.skip_advance.get() {
+            // See DeleteState::RestoreContextAfterBalancing
             self.skip_advance.set(false);
             let mem_page = self.stack.top_ref();
             let contents = mem_page.get_contents();
@@ -4843,6 +4845,11 @@ impl BTreeCursor {
                 }
                 DeleteState::RestoreContextAfterBalancing => {
                     return_if_io!(self.restore_context());
+
+                    // We deleted key K, and performed a seek to: GE { eq_only: true } K.
+                    // This means that the cursor is now pointing to the next key after K.
+                    // We need to make the next call to BTreeCursor::next() a no-op so that we don't skip over
+                    // a row when deleting rows in a loop.
                     self.skip_advance.set(true);
                     self.state = CursorState::None;
                     return Ok(IOResult::Done(()));
