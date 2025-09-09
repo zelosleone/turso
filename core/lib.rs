@@ -1318,10 +1318,7 @@ impl Connection {
         // FIXME: for now, only support read only attach
         opts.mode = OpenMode::ReadOnly;
         let flags = opts.get_flags()?;
-        let io = opts
-            .vfs
-            .map(|vfs| Database::io_for_vfs(vfs))
-            .unwrap_or(Ok(io))?;
+        let io = opts.vfs.map(Database::io_for_vfs).unwrap_or(Ok(io))?;
         let db = Database::open_file_with_flags(io.clone(), &opts.path, flags, db_opts)?;
         if let Some(modeof) = opts.modeof {
             let perms = std::fs::metadata(modeof)?;
