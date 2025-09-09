@@ -387,7 +387,7 @@ impl Limbo {
         }
 
         let start = Instant::now();
-        let mut stats = if self.opts.timer || self.opts.stats {
+        let mut stats = if self.opts.timer {
             Some(QueryStatistics {
                 io_time_elapsed_samples: vec![],
                 execute_time_elapsed_samples: vec![],
@@ -471,19 +471,20 @@ impl Limbo {
             )
         };
         if self.opts.timer {
-            let stats = stats.unwrap();
-            let _ = self.writeln("Command stats:\n----------------------------");
-            let _ = self.writeln(format!(
-                "total: {} (this includes parsing/coloring of cli app)\n",
-                elapsed_as_str(start.elapsed())
-            ));
+            if let Some(stats) = stats {
+                let _ = self.writeln("Command stats:\n----------------------------");
+                let _ = self.writeln(format!(
+                    "total: {} (this includes parsing/coloring of cli app)\n",
+                    elapsed_as_str(start.elapsed())
+                ));
 
-            let _ = self.writeln("query execution stats:\n----------------------------");
-            let _ = self.writeln(sample_stats_as_str(
-                "Execution",
-                &stats.execute_time_elapsed_samples,
-            ));
-            let _ = self.writeln(sample_stats_as_str("I/O", &stats.io_time_elapsed_samples));
+                let _ = self.writeln("query execution stats:\n----------------------------");
+                let _ = self.writeln(sample_stats_as_str(
+                    "Execution",
+                    &stats.execute_time_elapsed_samples,
+                ));
+                let _ = self.writeln(sample_stats_as_str("I/O", &stats.io_time_elapsed_samples));
+            }
         }
     }
 
