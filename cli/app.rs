@@ -140,7 +140,7 @@ macro_rules! row_step_result_query {
                     stats.execute_time_elapsed_samples.push(start.elapsed());
                 }
                 let report = miette::Error::from(err).with_source_code($sql.to_owned());
-                let _ = $app.write_fmt(format_args!("{report:?}"));
+                let _ = $app.writeln_fmt(format_args!("{report:?}"));
                 break;
             }
         }
@@ -245,7 +245,7 @@ impl Limbo {
             self.handle_first_input(&sql)?;
         }
         if !quiet {
-            self.write_fmt(format_args!("Turso v{}", env!("CARGO_PKG_VERSION")))?;
+            self.writeln_fmt(format_args!("Turso v{}", env!("CARGO_PKG_VERSION")))?;
             self.writeln("Enter \".help\" for usage hints.")?;
             self.writeln(
                 "This software is ALPHA, only use for development, testing, and experimentation.",
@@ -416,7 +416,11 @@ impl Limbo {
     }
 
     fn write_fmt(&mut self, fmt: std::fmt::Arguments) -> io::Result<()> {
-        let _ = self.writer.as_mut().unwrap().write_fmt(fmt);
+        self.writer.as_mut().unwrap().write_fmt(fmt)
+    }
+
+    fn writeln_fmt(&mut self, fmt: std::fmt::Arguments) -> io::Result<()> {
+        self.writer.as_mut().unwrap().write_fmt(fmt)?;
         self.writer.as_mut().unwrap().write_all(b"\n")
     }
 
@@ -618,12 +622,12 @@ impl Limbo {
                     if let Some(opcode) = args.opcode {
                         for op in &OPCODE_DESCRIPTIONS {
                             if op.name.eq_ignore_ascii_case(opcode.trim()) {
-                                let _ = self.write_fmt(format_args!("{op}"));
+                                let _ = self.writeln_fmt(format_args!("{op}"));
                             }
                         }
                     } else {
                         for op in &OPCODE_DESCRIPTIONS {
-                            let _ = self.write_fmt(format_args!("{op}\n"));
+                            let _ = self.writeln_fmt(format_args!("{op}\n"));
                         }
                     }
                 }
@@ -632,13 +636,13 @@ impl Limbo {
                 }
                 Command::OutputMode(args) => {
                     if let Err(e) = self.set_mode(args.mode) {
-                        let _ = self.write_fmt(format_args!("Error: {e}"));
+                        let _ = self.writeln_fmt(format_args!("Error: {e}"));
                     }
                 }
                 Command::SetOutput(args) => {
                     if let Some(path) = args.path {
                         if let Err(e) = self.set_output_file(&path) {
-                            let _ = self.write_fmt(format_args!("Error: {e}"));
+                            let _ = self.writeln_fmt(format_args!("Error: {e}"));
                         }
                     } else {
                         self.set_output_stdout();
@@ -671,7 +675,7 @@ impl Limbo {
                 }
                 Command::Dump => {
                     if let Err(e) = self.dump_database() {
-                        let _ = self.write_fmt(format_args!("/****** ERROR: {e} ******/"));
+                        let _ = self.writeln_fmt(format_args!("/****** ERROR: {e} ******/"));
                     }
                 }
                 Command::DbConfig(_args) => {
@@ -836,7 +840,7 @@ impl Limbo {
             Ok(None) => {}
             Err(err) => {
                 let report = miette::Error::from(err).with_source_code(sql.to_owned());
-                let _ = self.write_fmt(format_args!("{report:?}"));
+                let _ = self.writeln_fmt(format_args!("{report:?}"));
                 anyhow::bail!("We have to throw here, even if we printed error");
             }
         }
@@ -912,13 +916,13 @@ impl Limbo {
                     schema_str.to_string()
                 }
             };
-            let _ = self.write_fmt(format_args!("{modified_schema};"));
+            let _ = self.writeln_fmt(format_args!("{modified_schema};"));
             // For views, add the column comment like SQLite does
             if obj_type.as_str() == "view" {
                 let columns = self
                     .get_view_columns(obj_name.as_str())
                     .unwrap_or_else(|_| "x".to_string());
-                let _ = self.write_fmt(format_args!("/* {}({}) */", obj_name.as_str(), columns));
+                let _ = self.writeln_fmt(format_args!("/* {}({}) */", obj_name.as_str(), columns));
             }
             true
         } else {
@@ -1058,7 +1062,7 @@ impl Limbo {
                         format!("{target_db}.{table_name}")
                     };
                     let _ = self
-                        .write_fmt(format_args!("-- Error: Table '{table_display}' not found."));
+                        .writeln_fmt(format_args!("-- Error: Table '{table_display}' not found."));
                 }
             }
             None => {
@@ -1135,7 +1139,7 @@ impl Limbo {
         if !tables.is_empty() {
             let _ = self.writeln(tables.trim_end().as_bytes());
         } else if let Some(pattern) = pattern {
-            let _ = self.write_fmt(format_args!(
+            let _ = self.writeln_fmt(format_args!(
                 "Error: Tables with pattern '{pattern}' not found."
             ));
         } else {
