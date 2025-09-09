@@ -95,7 +95,11 @@ impl MaterializedViewCursor {
 
         // Process the delta through the circuit to get materialized changes
         let mut uncommitted = DeltaSet::new();
-        uncommitted.insert(view_guard.base_table().name.clone(), tx_delta);
+        // Get the first table name from the view's referenced tables
+        let table_names = view_guard.get_referenced_table_names();
+        if !table_names.is_empty() {
+            uncommitted.insert(table_names[0].clone(), tx_delta);
+        }
 
         let processed_delta = return_if_io!(view_guard.execute_with_uncommitted(
             uncommitted,
