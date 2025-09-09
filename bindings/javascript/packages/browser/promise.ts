@@ -1,4 +1,4 @@
-import { DatabasePromise, NativeDatabase, DatabaseOpts, SqliteError } from "@tursodatabase/database-core"
+import { DatabasePromise, NativeDatabase, DatabaseOpts, SqliteError } from "@tursodatabase/database-common"
 import { connect as nativeConnect, initThreadPool, MainWorker } from "#index";
 
 let workerRequestId = 0;

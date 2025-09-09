@@ -90,8 +90,8 @@ jobs:
         shell: bash
       - name: Install dependencies
         run: yarn install
-      - name: Build core
-        run: yarn workspace @tursodatabase/database-core build
+      - name: Build common
+        run: yarn workspace @tursodatabase/database-common build
       - name: Setup node x86
         uses: actions/setup-node@v4
         if: matrix.settings.target == 'x86_64-pc-windows-msvc'
@@ -135,8 +135,8 @@ jobs:
           node-version: ${{ matrix.node }}
       - name: Install dependencies
         run: yarn install
-      - name: Build core
-        run: yarn workspace @tursodatabase/database-core build
+      - name: Build common
+        run: yarn workspace @tursodatabase/database-common build
       - name: Download artifacts
         uses: actions/download-artifact@v4
         with:

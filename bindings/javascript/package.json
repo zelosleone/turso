@@ -5,7 +5,7 @@
     "test": "npm run test --workspaces"
   },
   "workspaces": [
-    "packages/core",
+    "packages/common",
     "packages/native",
     "packages/browser"
   ]

@@ -1,4 +1,4 @@
-import { DatabaseCompat, NativeDatabase, SqliteError, DatabaseOpts } from "@tursodatabase/database-core"
+import { DatabaseCompat, NativeDatabase, SqliteError, DatabaseOpts } from "@tursodatabase/database-common"
 import { Database as NativeDB } from "#index";
 
 class Database extends DatabaseCompat {
