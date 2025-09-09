@@ -63,9 +63,8 @@ fn main() -> anyhow::Result<()> {
     }
 
     loop {
-        let readline = app.readline();
-        match readline {
-            Ok(line) => match app.handle_input_line(line.trim()) {
+        match app.readline() {
+            Ok(_) => match app.consume() {
                 Ok(_) => {}
                 Err(e) => {
                     eprintln!("{e}");
@@ -83,7 +82,14 @@ fn main() -> anyhow::Result<()> {
                 continue;
             }
             Err(ReadlineError::Eof) => {
-                app.handle_remaining_input();
+                // consume remaining input before exit
+                match app.consume() {
+                    Ok(_) => {}
+                    Err(e) => {
+                        eprintln!("{e}");
+                    }
+                };
+
                 let _ = app.close_conn();
                 break;
             }

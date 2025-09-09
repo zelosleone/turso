@@ -375,11 +375,6 @@ impl Limbo {
         self.writer.as_mut().unwrap().write_all(b"\n")
     }
 
-    fn buffer_input(&mut self, line: &str) {
-        self.input_buff.push_str(line);
-        self.input_buff.push(' ');
-    }
-
     fn run_query(&mut self, input: &str) {
         let echo = self.opts.echo;
         if echo {
@@ -481,34 +476,38 @@ impl Limbo {
         }
     }
 
-    fn reset_line(&mut self, _line: &str) -> rustyline::Result<()> {
+    fn reset_line(&mut self) -> rustyline::Result<()> {
         // Entry is auto added to history
         // self.rl.add_history_entry(line.to_owned())?;
         self.interrupt_count.store(0, Ordering::Release);
         Ok(())
     }
 
-    pub fn handle_input_line(&mut self, line: &str) -> anyhow::Result<()> {
-        if self.input_buff.is_empty() {
-            if line.is_empty() {
-                return Ok(());
+    // consume will consume `input_buff`
+    pub fn consume(&mut self) -> anyhow::Result<()> {
+        if self.input_buff.trim().is_empty() {
+            return Ok(());
+        }
+
+        self.reset_line()?;
+
+        // SAFETY: we don't reset input after we handle the command
+        let value: &'static str =
+            unsafe { std::mem::transmute::<&str, &'static str>(self.input_buff.as_str()) }.trim();
+        match (value.starts_with('.'), value.ends_with(';')) {
+            (true, _) => {
+                self.handle_dot_command(value.strip_prefix('.').unwrap());
+                self.reset_input();
             }
-            if let Some(command) = line.strip_prefix('.') {
-                self.handle_dot_command(command);
-                let _ = self.reset_line(line);
-                return Ok(());
+            (false, true) => {
+                self.run_query(value);
+                self.reset_input();
+            }
+            (false, false) => {
+                self.set_multiline_prompt();
             }
         }
 
-        self.reset_line(line)?;
-        if line.ends_with(';') {
-            self.buffer_input(line);
-            let buff = self.input_buff.clone();
-            self.run_query(buff.as_str());
-        } else {
-            self.buffer_input(format!("{line}\n").as_str());
-            self.set_multiline_prompt();
-        }
         Ok(())
     }
 
@@ -1331,35 +1330,23 @@ impl Limbo {
         Ok(())
     }
 
-    pub fn handle_remaining_input(&mut self) {
-        if self.input_buff.is_empty() {
-            return;
-        }
+    // readline will read inputs from rustyline or stdin
+    // and write it to input_buff.
+    pub fn readline(&mut self) -> Result<(), ReadlineError> {
+        use std::fmt::Write;
 
-        let buff = self.input_buff.clone();
-        self.run_query(buff.as_str());
-        self.reset_input();
-    }
-
-    pub fn readline(&mut self) -> Result<String, ReadlineError> {
         if let Some(rl) = &mut self.rl {
-            Ok(rl.readline(&self.prompt)?)
+            let result = rl.readline(&self.prompt)?;
+            let _ = self.input_buff.write_str(result.as_str());
         } else {
-            let mut input = String::new();
             let mut reader = std::io::stdin().lock();
-            if reader.read_line(&mut input)? == 0 {
+            if reader.read_line(&mut self.input_buff)? == 0 {
                 return Err(ReadlineError::Eof);
             }
-            // Remove trailing newline
-            if input.ends_with('\n') {
-                input.pop();
-                if input.ends_with('\r') {
-                    input.pop();
-                }
-            }
-
-            Ok(input)
         }
+
+        let _ = self.input_buff.write_char(' ');
+        Ok(())
     }
 
     pub fn dump_database_from_conn<W: Write, P: ProgressSink>(
