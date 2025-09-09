@@ -2231,39 +2231,22 @@ impl WalFile {
     }
 }
 
-/// 32MB maximum WAL file size to read whole file into one buffer
-const WAL_SIZE_LIMIT: u64 = 1024 * 1024 * 32;
-
 impl WalFileShared {
     pub fn open_shared_if_exists(
         io: &Arc<dyn IO>,
         path: &str,
     ) -> Result<Arc<RwLock<WalFileShared>>> {
         let file = io.open_file(path, crate::io::OpenFlags::Create, false)?;
-        let wal_file_shared = match file.size()? {
-            0 => return WalFileShared::new_noop(),
-            n if n <= WAL_SIZE_LIMIT => sqlite3_ondisk::read_entire_wal_dumb(&file)?,
-            _ => {
-                tracing::info!(
-                    "WAL file is large (>{WAL_SIZE_LIMIT} bytes), using streaming reader"
-                );
-                sqlite3_ondisk::read_wal_streaming(&file, io)?
-            }
-        };
-
-        let mut remaining: usize = 100_000;
-        loop {
-            io.run_once()?;
-            if wal_file_shared
-                .try_read()
-                .is_some_and(|wfs| wfs.loaded.load(Ordering::Acquire))
-            {
-                break;
-            }
-            remaining = remaining.checked_sub(1).ok_or_else(|| {
-                LimboError::InternalError("Timed out waiting for WAL to load".into())
-            })?;
+        if file.size()? == 0 {
+            return WalFileShared::new_noop();
         }
+        let wal_file_shared = sqlite3_ondisk::build_shared_wal(&file, io)?;
+        turso_assert!(
+            wal_file_shared
+                .try_read()
+                .is_some_and(|wfs| wfs.loaded.load(Ordering::Acquire)),
+            "Unable to read WAL shared state"
+        );
         Ok(wal_file_shared)
     }
 
