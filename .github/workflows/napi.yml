@@ -137,8 +137,6 @@ jobs:
         run: yarn install
       - name: Build core
         run: yarn workspace @tursodatabase/database-core build
-      - name: Build native
-        run: yarn workspace @tursodatabase/database build
       - name: Download artifacts
         uses: actions/download-artifact@v4
         with:
@@ -152,7 +150,6 @@ jobs:
   publish:
     name: Publish
     runs-on: ubuntu-latest
-    if: startsWith(github.ref, 'refs/tags/v')
     permissions:
       contents: read
       id-token: write
@@ -179,6 +176,7 @@ jobs:
       - name: Install dependencies
         run: yarn tsc-build
       - name: Publish
+        if: startsWith(github.ref, 'refs/tags/v')
         run: |
           npm config set provenance true
           if git log -1 --pretty=%B | grep "^Turso [0-9]\+\.[0-9]\+\.[0-9]\+$";
@@ -190,8 +188,13 @@ jobs:
             echo "//registry.npmjs.org/:_authToken=$NPM_TOKEN" >> ~/.npmrc
             npm publish --workspaces --access public --tag next
           else
+            echo "git log structure is unexpected, skip publishing"
             npm publish --workspaces --dry-run
           fi
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
+      - name: Publish (dry-run)
+        if: !startsWith(github.ref, 'refs/tags/v')
+        run: |
+          npm publish --workspaces --dry-run
