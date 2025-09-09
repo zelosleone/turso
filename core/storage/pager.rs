@@ -1563,12 +1563,16 @@ impl Pager {
     /// of a rollback or in case we want to invalidate page cache after starting a read transaction
     /// right after new writes happened which would invalidate current page cache.
     pub fn clear_page_cache(&self) {
-        self.dirty_pages.borrow_mut().clear();
-        self.page_cache.write().unset_dirty_all_pages();
-        self.page_cache
-            .write()
-            .clear()
-            .expect("Failed to clear page cache");
+        let mut dirty_pages = self.dirty_pages.borrow_mut();
+        let mut cache = self.page_cache.write();
+        for page_id in dirty_pages.iter() {
+            let page_key = PageCacheKey::new(*page_id);
+            if let Some(page) = cache.get(&page_key).unwrap_or(None) {
+                page.clear_dirty();
+            }
+        }
+        dirty_pages.clear();
+        cache.clear().expect("Failed to clear page cache");
     }
 
     /// Checkpoint in Truncate mode and delete the WAL file. This method is _only_ to be called
