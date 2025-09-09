@@ -4331,6 +4331,7 @@ dependencies = [
  "napi",
  "napi-build",
  "napi-derive",
+ "tracing",
  "tracing-subscriber",
  "turso_core",
 ]
