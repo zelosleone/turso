@@ -1638,7 +1638,6 @@ pub fn build_shared_wal(
         l.unlock();
     }
 
-    #[allow(clippy::arc_with_non_send_sync)]
     let wal_file_shared = Arc::new(RwLock::new(WalFileShared {
         enabled: AtomicBool::new(true),
         wal_header: header.clone(),
@@ -1964,7 +1963,6 @@ pub fn begin_read_wal_frame_raw(
 ) -> Result<Completion> {
     tracing::trace!("begin_read_wal_frame_raw(offset={})", offset);
     let buf = Arc::new(buffer_pool.get_wal_frame());
-    #[allow(clippy::arc_with_non_send_sync)]
     let c = Completion::new_read(buf, complete);
     let c = io.pread(offset, c)?;
     Ok(c)

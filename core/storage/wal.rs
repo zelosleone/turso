@@ -553,7 +553,6 @@ impl fmt::Debug for OngoingCheckpoint {
     }
 }
 
-#[allow(dead_code)]
 pub struct WalFile {
     io: Arc<dyn IO>,
     buffer_pool: Arc<BufferPool>,
@@ -660,7 +659,6 @@ impl fmt::Debug for WalFile {
 // TODO(pere): lock only important parts + pin WalFileShared
 /// WalFileShared is the part of a WAL that will be shared between threads. A wal has information
 /// that needs to be communicated between threads so this struct does the job.
-#[allow(dead_code)]
 pub struct WalFileShared {
     pub enabled: AtomicBool,
     pub wal_header: Arc<SpinLock<WalHeader>>,
