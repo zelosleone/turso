@@ -599,14 +599,10 @@ mod tests {
                     } else {
                         format!("UPDATE t SET c{affected_col} = {new_y} WHERE c{predicate_col} {comparison} {predicate_value}")
                     }
+                } else if omit_where {
+                    "DELETE FROM t".to_string()
                 } else {
-                    if omit_where {
-                        "DELETE FROM t".to_string()
-                    } else {
-                        format!(
-                            "DELETE FROM t WHERE c{predicate_col} {comparison} {predicate_value}"
-                        )
-                    }
+                    format!("DELETE FROM t WHERE c{predicate_col} {comparison} {predicate_value}")
                 };
 
                 dml_statements.push(query.clone());
