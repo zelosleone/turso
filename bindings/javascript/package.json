@@ -1,6 +1,8 @@
 {
   "scripts": {
-    "build": "npm run build --workspaces"
+    "build": "npm run build --workspaces",
+    "tsc-build": "npm run tsc-build --workspaces",
+    "test": "npm run test --workspaces"
   },
   "workspaces": [
     "packages/core",

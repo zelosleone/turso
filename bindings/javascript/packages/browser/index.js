@@ -11,7 +11,7 @@ const __wasi = new __WASI({
   version: 'preview1',
 })
 
-const __wasmUrl = new URL('./turso.wasm32-wasi.debug.wasm', import.meta.url).href
+const __wasmUrl = new URL('./turso.wasm32-wasi.wasm', import.meta.url).href
 const __emnapiContext = __emnapiGetDefaultContext()
 
 

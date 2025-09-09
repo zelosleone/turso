@@ -18,6 +18,7 @@
   },
   "scripts": {
     "tsc-build": "npm exec tsc",
-    "build": "npm run tsc-build"
+    "build": "npm run tsc-build",
+    "test": "echo 'no tests'"
   }
 }

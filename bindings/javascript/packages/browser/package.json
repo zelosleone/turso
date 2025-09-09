@@ -8,6 +8,12 @@
   "license": "MIT",
   "main": "index.js",
   "packageManager": "yarn@4.9.2",
+  "files": [
+    "index.js",
+    "worker.mjs",
+    "turso.wasm32-wasi.wasm",
+    "dist/**"
+  ],
   "devDependencies": {
     "@napi-rs/cli": "^3.1.5",
     "@napi-rs/wasm-runtime": "^1.0.3",
