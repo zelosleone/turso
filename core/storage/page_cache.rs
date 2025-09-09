@@ -631,16 +631,6 @@ impl PageCache {
         self.capacity
     }
 
-    pub fn unset_dirty_all_pages(&mut self) {
-        let entries = &self.entries;
-        for entry in entries.iter() {
-            if entry.page.is_none() {
-                continue;
-            }
-            entry.page.as_ref().unwrap().clear_dirty();
-        }
-    }
-
     #[cfg(test)]
     fn verify_cache_integrity(&self) {
         let map = &self.map;

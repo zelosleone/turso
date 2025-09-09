@@ -2122,20 +2122,14 @@ impl Pager {
         is_write: bool,
     ) -> Result<(), LimboError> {
         tracing::debug!(schema_did_change);
-        if is_write {
-            self.dirty_pages.borrow_mut().clear();
-        } else {
+        if !is_write {
             turso_assert!(
                 self.dirty_pages.borrow().is_empty(),
                 "dirty pages should be empty for read txn"
             );
         }
-        let mut cache = self.page_cache.write();
-
+        self.clear_page_cache();
         self.reset_internal_states();
-
-        cache.unset_dirty_all_pages();
-        cache.clear().expect("failed to clear page cache");
         if schema_did_change {
             connection.schema.replace(connection._db.clone_schema()?);
         }
