@@ -1455,13 +1455,16 @@ pub fn op_column(
                 index_cursor_id,
                 table_cursor_id,
             } => {
-                let rowid = {
+                let Some(rowid) = ({
                     let index_cursor = state.get_cursor(index_cursor_id);
                     let index_cursor = index_cursor.as_btree_mut();
                     return_if_io!(index_cursor.rowid())
+                }) else {
+                    state.registers[*dest] = Register::Value(Value::Null);
+                    break 'outer;
                 };
                 state.op_column_state = OpColumnState::Seek {
-                    rowid: rowid.unwrap(),
+                    rowid,
                     table_cursor_id,
                 };
             }
