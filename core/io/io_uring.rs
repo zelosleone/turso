@@ -624,8 +624,8 @@ impl IO for UringIO {
         Ok(())
     }
 
-    fn run_once(&self) -> Result<()> {
-        trace!("run_once()");
+    fn step(&self) -> Result<()> {
+        trace!("step()");
         let mut inner = self.inner.lock();
         let ring = &mut inner.ring;
         ring.flush_overflow()?;
