@@ -4293,8 +4293,14 @@ impl BTreeCursor {
             let cell_idx = self.stack.current_cell_index();
             let cell_count = contents.cell_count();
             let has_record = cell_idx >= 0 && cell_idx < cell_count as i32;
-            self.has_record.set(has_record);
-            return Ok(IOResult::Done(has_record));
+            if has_record {
+                self.has_record.set(true);
+                // If we are positioned at a record, we stop here without advancing.
+                return Ok(IOResult::Done(true));
+            }
+            // But: if we aren't currently positioned at a record (for example, we are at the end of a page),
+            // we need to advance despite the skip_advance flag
+            // because the intent is to find the next record immediately after the one we just deleted.
         }
         loop {
             match self.advance_state {
