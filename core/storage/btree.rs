@@ -481,7 +481,7 @@ pub struct BTreeCursor {
     /// Page id of the root page used to go back up fast.
     root_page: usize,
     /// Rowid and record are stored before being consumed.
-    has_record: Cell<bool>,
+    pub has_record: Cell<bool>,
     null_flag: bool,
     /// Index internal pages are consumed on the way up, so we store going upwards flag in case
     /// we just moved to a parent page and the parent page is an internal index page which requires
@@ -543,6 +543,8 @@ pub struct BTreeCursor {
     seek_end_state: SeekEndState,
     /// State machine for [BTreeCursor::move_to]
     move_to_state: MoveToState,
+    /// Whether the next call to [BTreeCursor::next()] should be a no-op
+    skip_advance: Cell<bool>,
 }
 
 /// We store the cell index and cell count for each page in the stack.
@@ -615,6 +617,7 @@ impl BTreeCursor {
             count_state: CountState::Start,
             seek_end_state: SeekEndState::Start,
             move_to_state: MoveToState::Start,
+            skip_advance: Cell::new(false),
         }
     }
 
@@ -696,7 +699,7 @@ impl BTreeCursor {
     /// Move the cursor to the previous record and return it.
     /// Used in backwards iteration.
     #[instrument(skip(self), level = Level::DEBUG, name = "prev")]
-    fn get_prev_record(&mut self) -> Result<IOResult<bool>> {
+    pub fn get_prev_record(&mut self) -> Result<IOResult<bool>> {
         loop {
             let (old_top_idx, page_type, is_index, is_leaf, cell_count) = {
                 let page = self.stack.top_ref();
@@ -1202,7 +1205,7 @@ impl BTreeCursor {
     /// Move the cursor to the next record and return it.
     /// Used in forwards iteration, which is the default.
     #[instrument(skip(self), level = Level::DEBUG, name = "next")]
-    fn get_next_record(&mut self) -> Result<IOResult<bool>> {
+    pub fn get_next_record(&mut self) -> Result<IOResult<bool>> {
         if let Some(mv_cursor) = &self.mv_cursor {
             let mut mv_cursor = mv_cursor.borrow_mut();
             mv_cursor.forward();
@@ -4241,6 +4244,7 @@ impl BTreeCursor {
         if self.valid_state == CursorValidState::Invalid {
             return Ok(IOResult::Done(()));
         }
+        self.skip_advance.set(false);
         loop {
             match self.rewind_state {
                 RewindState::Start => {
@@ -4280,6 +4284,16 @@ impl BTreeCursor {
         if self.valid_state == CursorValidState::Invalid {
             return Ok(IOResult::Done(false));
         }
+        if self.skip_advance.get() {
+            self.skip_advance.set(false);
+            let mem_page = self.stack.top_ref();
+            let contents = mem_page.get_contents();
+            let cell_idx = self.stack.current_cell_index();
+            let cell_count = contents.cell_count();
+            let has_record = cell_idx >= 0 && cell_idx < cell_count as i32;
+            self.has_record.set(has_record);
+            return Ok(IOResult::Done(has_record));
+        }
         loop {
             match self.advance_state {
                 AdvanceState::Start => {
@@ -4296,7 +4310,7 @@ impl BTreeCursor {
         }
     }
 
-    fn invalidate_record(&mut self) {
+    pub fn invalidate_record(&mut self) {
         self.get_immutable_record_or_create()
             .as_mut()
             .unwrap()
@@ -4361,6 +4375,7 @@ impl BTreeCursor {
             let mut mv_cursor = mv_cursor.borrow_mut();
             return mv_cursor.seek(key, op);
         }
+        self.skip_advance.set(false);
         // Empty trace to capture the span information
         tracing::trace!("");
         // We need to clear the null flag for the table cursor before seeking,
@@ -4547,7 +4562,7 @@ impl BTreeCursor {
                         };
                         CursorContext {
                             key: CursorContextKey::IndexKeyRowId(record),
-                            seek_op: SeekOp::LT,
+                            seek_op: SeekOp::GE { eq_only: true },
                         }
                     } else {
                         let Some(rowid) = return_if_io!(self.rowid()) else {
@@ -4555,7 +4570,7 @@ impl BTreeCursor {
                         };
                         CursorContext {
                             key: CursorContextKey::TableRowId(rowid),
-                            seek_op: SeekOp::LT,
+                            seek_op: SeekOp::GE { eq_only: true },
                         }
                     };
 
@@ -4828,6 +4843,7 @@ impl BTreeCursor {
                 }
                 DeleteState::RestoreContextAfterBalancing => {
                     return_if_io!(self.restore_context());
+                    self.skip_advance.set(true);
                     self.state = CursorState::None;
                     return Ok(IOResult::Done(()));
                 }
