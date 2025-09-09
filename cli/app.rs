@@ -387,9 +387,13 @@ impl Limbo {
         }
 
         let start = Instant::now();
-        let mut stats = QueryStatistics {
-            io_time_elapsed_samples: vec![],
-            execute_time_elapsed_samples: vec![],
+        let mut stats = if self.opts.timer {
+            Some(QueryStatistics {
+                io_time_elapsed_samples: vec![],
+                execute_time_elapsed_samples: vec![],
+            })
+        } else {
+            None
         };
         // TODO this is a quickfix. Some ideas to do case insensitive comparisons is to use
         // Uncased or Unicase.
@@ -414,14 +418,15 @@ impl Limbo {
             let runner = conn.query_runner(input.as_bytes());
             for output in runner {
                 if self
-                    .print_query_result(input, output, Some(&mut stats))
+                    .print_query_result(input, output, stats.as_mut())
                     .is_err()
                 {
                     break;
                 }
             }
         }
-        self.print_query_performance_stats(start, stats);
+
+        self.print_query_performance_stats(start, stats.as_ref());
 
         // Display stats if enabled
         if self.opts.stats {
@@ -440,7 +445,7 @@ impl Limbo {
         self.reset_input();
     }
 
-    fn print_query_performance_stats(&mut self, start: Instant, stats: QueryStatistics) {
+    fn print_query_performance_stats(&mut self, start: Instant, stats: Option<&QueryStatistics>) {
         let elapsed_as_str = |duration: Duration| {
             if duration.as_secs() >= 1 {
                 format!("{} s", duration.as_secs_f64())
@@ -452,7 +457,7 @@ impl Limbo {
                 format!("{} ns", duration.as_nanos())
             }
         };
-        let sample_stats_as_str = |name: &str, samples: Vec<Duration>| {
+        let sample_stats_as_str = |name: &str, samples: &Vec<Duration>| {
             if samples.is_empty() {
                 return format!("{name}: No samples available");
             }
@@ -466,18 +471,20 @@ impl Limbo {
             )
         };
         if self.opts.timer {
-            let _ = self.writeln("Command stats:\n----------------------------");
-            let _ = self.writeln(format!(
-                "total: {} (this includes parsing/coloring of cli app)\n",
-                elapsed_as_str(start.elapsed())
-            ));
+            if let Some(stats) = stats {
+                let _ = self.writeln("Command stats:\n----------------------------");
+                let _ = self.writeln(format!(
+                    "total: {} (this includes parsing/coloring of cli app)\n",
+                    elapsed_as_str(start.elapsed())
+                ));
 
-            let _ = self.writeln("query execution stats:\n----------------------------");
-            let _ = self.writeln(sample_stats_as_str(
-                "Execution",
-                stats.execute_time_elapsed_samples,
-            ));
-            let _ = self.writeln(sample_stats_as_str("I/O", stats.io_time_elapsed_samples));
+                let _ = self.writeln("query execution stats:\n----------------------------");
+                let _ = self.writeln(sample_stats_as_str(
+                    "Execution",
+                    &stats.execute_time_elapsed_samples,
+                ));
+                let _ = self.writeln(sample_stats_as_str("I/O", &stats.io_time_elapsed_samples));
+            }
         }
     }
 
