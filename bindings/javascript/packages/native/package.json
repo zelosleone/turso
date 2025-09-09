@@ -1,0 +1,48 @@
+{
+  "name": "@tursodatabase/database",
+  "version": "0.1.5-pre.4",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/tursodatabase/turso"
+  },
+  "license": "MIT",
+  "module": "./dist/promise.js",
+  "main": "./dist/promise.js",
+  "type": "module",
+  "exports": {
+    ".": "./dist/promise.js",
+    "./compat": "./dist/compat.js"
+  },
+  "packageManager": "yarn@4.9.2",
+  "devDependencies": {
+    "@napi-rs/cli": "^3.1.5",
+    "@napi-rs/wasm-runtime": "^1.0.3",
+    "@types/node": "^24.3.1",
+    "typescript": "^5.9.2",
+    "vitest": "^3.2.4"
+  },
+  "scripts": {
+    "napi-build": "napi build --platform --release --esm --manifest-path ../../Cargo.toml --output-dir . && rm turso.wasi* wasi* browser.js",
+    "napi-dirs": "napi create-npm-dirs",
+    "napi-artifacts": "napi artifacts --output-dir .",
+    "tsc-build": "npm exec tsc",
+    "build": "npm run napi-build && npm run tsc-build",
+    "test": "vitest --run"
+  },
+  "napi": {
+    "binaryName": "turso",
+    "targets": [
+      "x86_64-unknown-linux-gnu",
+      "x86_64-pc-windows-msvc",
+      "universal-apple-darwin",
+      "aarch64-unknown-linux-gnu",
+      "wasm32-wasip1-threads"
+    ]
+  },
+  "dependencies": {
+    "@tursodatabase/database-core": "^0.1.5-pre.4"
+  },
+  "imports": {
+    "#index": "./index.js"
+  }
+}
