@@ -112,7 +112,7 @@ pub struct DatabaseOpts {
 }
 
 fn batch_sync(conn: &Arc<turso_core::Connection>, sql: &str) -> napi::Result<()> {
-    conn.prepare_execute_batch(&sql).map_err(|e| {
+    conn.prepare_execute_batch(sql).map_err(|e| {
         Error::new(
             Status::GenericFailure,
             format!("Failed to execute batch: {e}"),
@@ -168,7 +168,7 @@ impl Database {
 
         #[cfg(feature = "browser")]
         if !is_memory(&path) {
-            return Err(Error::new(Status::GenericFailure, format!("sync constructor is not supported for FS-backed databases in the WASM. Use async connect(...) method instead")));
+            return Err(Error::new(Status::GenericFailure, "sync constructor is not supported for FS-backed databases in the WASM. Use async connect(...) method instead".to_string()));
         }
 
         let file = io
@@ -252,7 +252,7 @@ impl Database {
     pub fn batch_async(&self, sql: String) -> Result<AsyncTask<DbTask>> {
         Ok(AsyncTask::new(DbTask::Batch {
             conn: self.conn()?.clone(),
-            sql: sql,
+            sql,
         }))
     }
 
@@ -275,6 +275,7 @@ impl Database {
             .map(|i| std::ffi::CString::new(stmt.get_column_name(i).to_string()).unwrap())
             .collect();
         Ok(Statement {
+            #[allow(clippy::arc_with_non_send_sync)]
             stmt: Arc::new(RefCell::new(Some(stmt))),
             column_names,
             mode: RefCell::new(PresentationMode::Expanded),
