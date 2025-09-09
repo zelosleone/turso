@@ -676,7 +676,6 @@ pub struct WalFileShared {
     pub frame_cache: Arc<SpinLock<HashMap<u64, Vec<u64>>>>,
     pub last_checksum: (u32, u32), // Check of last frame in WAL, this is a cumulative checksum over all frames in the WAL
     pub file: Option<Arc<dyn File>>,
-
     /// Read locks advertise the maximum WAL frame a reader may access.
     /// Slot 0 is special, when it is held (shared) the reader bypasses the WAL and uses the main DB file.
     /// When checkpointing, we must acquire the exclusive read lock 0 to ensure that no readers read
@@ -2232,27 +2231,40 @@ impl WalFile {
     }
 }
 
+/// 32MB maximum WAL file size to read whole file into one buffer
+const WAL_SIZE_LIMIT: u64 = 1024 * 1024 * 32;
+
 impl WalFileShared {
     pub fn open_shared_if_exists(
         io: &Arc<dyn IO>,
         path: &str,
     ) -> Result<Arc<RwLock<WalFileShared>>> {
         let file = io.open_file(path, crate::io::OpenFlags::Create, false)?;
-        if file.size()? > 0 {
-            let wal_file_shared = sqlite3_ondisk::read_entire_wal_dumb(&file)?;
-            // TODO: Return a completion instead.
-            let mut max_loops = 100_000;
-            while !wal_file_shared.read().loaded.load(Ordering::Acquire) {
-                io.run_once()?;
-                max_loops -= 1;
-                if max_loops == 0 {
-                    panic!("WAL file not loaded");
-                }
+        let wal_file_shared = match file.size()? {
+            0 => return WalFileShared::new_noop(),
+            n if n <= WAL_SIZE_LIMIT => sqlite3_ondisk::read_entire_wal_dumb(&file)?,
+            _ => {
+                tracing::info!(
+                    "WAL file is large (>{WAL_SIZE_LIMIT} bytes), using streaming reader"
+                );
+                sqlite3_ondisk::read_wal_streaming(&file, io)?
             }
-            Ok(wal_file_shared)
-        } else {
-            WalFileShared::new_noop()
+        };
+
+        let mut remaining: usize = 100_000;
+        loop {
+            io.run_once()?;
+            if wal_file_shared
+                .try_read()
+                .is_some_and(|wfs| wfs.loaded.load(Ordering::Acquire))
+            {
+                break;
+            }
+            remaining = remaining.checked_sub(1).ok_or_else(|| {
+                LimboError::InternalError("Timed out waiting for WAL to load".into())
+            })?;
         }
+        Ok(wal_file_shared)
     }
 
     pub fn is_initialized(&self) -> Result<bool> {
