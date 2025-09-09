@@ -1563,7 +1563,7 @@ impl Pager {
     /// of a rollback or in case we want to invalidate page cache after starting a read transaction
     /// right after new writes happened which would invalidate current page cache.
     pub fn clear_page_cache(&self) {
-        let mut dirty_pages = self.dirty_pages.borrow_mut();
+        let dirty_pages = self.dirty_pages.borrow();
         let mut cache = self.page_cache.write();
         for page_id in dirty_pages.iter() {
             let page_key = PageCacheKey::new(*page_id);
@@ -1571,7 +1571,6 @@ impl Pager {
                 page.clear_dirty();
             }
         }
-        dirty_pages.clear();
         cache.clear().expect("Failed to clear page cache");
     }
 
@@ -2122,13 +2121,15 @@ impl Pager {
         is_write: bool,
     ) -> Result<(), LimboError> {
         tracing::debug!(schema_did_change);
-        if !is_write {
+        self.clear_page_cache();
+        if is_write {
+            self.dirty_pages.borrow_mut().clear();
+        } else {
             turso_assert!(
                 self.dirty_pages.borrow().is_empty(),
                 "dirty pages should be empty for read txn"
             );
         }
-        self.clear_page_cache();
         self.reset_internal_states();
         if schema_did_change {
             connection.schema.replace(connection._db.clone_schema()?);
