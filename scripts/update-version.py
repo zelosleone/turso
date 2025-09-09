@@ -168,7 +168,7 @@ def run_cargo_update():
     """Run cargo update to update the Cargo.lock file."""
     try:
         # Run cargo update showing its output with verbose flag
-        print(f"Info: run cargo update")
+        print("Info: run cargo update")
         subprocess.run(["cargo", "update", "--workspace", "--verbose"], check=True)
         return True
     except Exception:
