@@ -1342,3 +1342,82 @@ do_execsql_test json_each_json_extract_on_value {
   {k3|[3]}
 }
 
+do_execsql_test json-each-2arg-array-basic {
+  SELECT key, value, type, path, fullkey FROM json_each('{"a":[1,2,3]}', '$.a') ORDER BY key;
+} {
+  {0|1|integer|$.a|$.a[0]} 
+  {1|2|integer|$.a|$.a[1]} 
+  {2|3|integer|$.a|$.a[2]}
+}
+
+do_execsql_test json-each-2arg-object-basic {
+  SELECT key, value, type, path, fullkey
+    FROM json_each('{"obj":{"a":[1,2],"n":10,"x":"y"}}', '$.obj')
+   ORDER BY key;
+} {
+  {a|[1,2]|array|$.obj|$.obj.a} 
+  {n|10|integer|$.obj|$.obj.n} 
+  {x|y|text|$.obj|$.obj.x}
+}
+
+do_execsql_test json-each-2arg-root-dollar-array {
+  SELECT key, value, type
+    FROM json_each('[4,5]', '$')
+   ORDER BY key;
+} {
+  {0|4|integer} 
+  {1|5|integer}
+}
+
+do_execsql_test json-each-2arg-start-at-primitive {
+  SELECT value, type, path, fullkey FROM json_each('{"a":[1,2,3]}', '$.a[1]');
+} {
+  {2|integer|$.a[1]|$.a[1]}
+}
+
+do_execsql_test json-each-2arg-start-at-object-inside-array {
+  SELECT key, value, type, path, fullkey
+    FROM json_each('{"arr":[{"x":1},{"y":2}]}', '$.arr[1]');
+} {
+  {y|2|integer|$.arr[1]|$.arr[1].y}
+}
+
+do_execsql_test json-each-2arg-nonexistent-path-returns-no-rows {
+  SELECT count(*) FROM json_each('{"a":1}', '$.missing');
+} {{0}}
+
+do_execsql_test json-each-2arg-empty-array {
+  SELECT count(*) FROM json_each('{"a":[]}', '$.a');
+} {{0}}
+
+do_execsql_test json-each-2arg-empty-object {
+  SELECT count(*) FROM json_each('{"o":{}}', '$.o');
+} {{0}}
+
+do_execsql_test json-each-2arg-bools-and-null {
+  SELECT typeof(value), type
+    FROM json_each('{"a":[null,true,false]}', '$.a')
+   ORDER BY key;
+} {
+  {null|null} 
+  {integer|true} 
+  {integer|false}
+}
+
+do_execsql_test json-each-2arg-primitive-key-null {
+  SELECT typeof(key), value, type, path, fullkey
+    FROM json_each('{"s":"hi"}', '$.s');
+} {{null|hi|text|$.s|$.s}}
+
+do_execsql_test json-each-2arg-negative-index-root {
+  SELECT key, value, type
+    FROM json_each('[{"a":1},{"b":2},{"c":3}]', '$[#-1]');
+} {{c|3|integer}}
+
+do_execsql_test_in_memory_any_error non-string-path {
+  SELECT * FROM json_each('{}', 123);
+}
+
+do_execsql_test_in_memory_any_error invalid-path {
+  SELECT * FROM json_each('{}', '$$$');
+}
