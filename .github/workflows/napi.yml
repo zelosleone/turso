@@ -32,24 +32,19 @@ jobs:
         settings:
           - host: windows-latest
             target: x86_64-pc-windows-msvc
-            directory: bindings/javascript/packages/native
             build: yarn workspace @tursodatabase/database napi-build --target x86_64-pc-windows-msvc
           - host: ubuntu-latest
             target: x86_64-unknown-linux-gnu
             docker: ghcr.io/napi-rs/napi-rs/nodejs-rust:lts-debian
-            directory: bindings/javascript/packages/native
             build: yarn workspace @tursodatabase/database napi-build --target x86_64-unknown-linux-gnu
           - host: macos-latest
             target: aarch64-apple-darwin
-            directory: bindings/javascript/packages/native
             build: yarn workspace @tursodatabase/database napi-build --target aarch64-apple-darwin
           - host: blacksmith-2vcpu-ubuntu-2404-arm
             target: aarch64-unknown-linux-gnu
-            directory: bindings/javascript/packages/native
             build: yarn workspace @tursodatabase/database napi-build --target aarch64-unknown-linux-gnu
           - host: ubuntu-latest
             target: wasm32-wasip1-threads
-            directory: bindings/javascript/packages/browser
             setup: |
               rustup target add wasm32-wasip1-threads
               wget https://github.com/WebAssembly/wasi-sdk/releases/download/wasi-sdk-25/wasi-sdk-25.0-x86_64-linux.tar.gz
@@ -119,10 +114,9 @@ jobs:
         with:
           name: bindings-${{ matrix.settings.target }}
           path: |
-            ${{ env.APP_NAME }}.*.node
-            ${{ env.APP_NAME }}.*.wasm
+            bindings/javascript/packages/native/${{ env.APP_NAME }}.*.node
+            bindings/javascript/packages/browser/${{ env.APP_NAME }}.*.wasm
           if-no-files-found: error
-        working-directory: ${{ matrix.settings.directory }}
   test-linux-x64-gnu-binding:
     name: Test bindings on Linux-x64-gnu - node@${{ matrix.node }}
     needs:
@@ -147,7 +141,7 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           name: bindings-x86_64-unknown-linux-gnu
-          path: bindings/javascript/packages/native
+          path: bindings/javascript/
       - name: List packages
         run: ls -R .
         shell: bash
@@ -168,16 +162,10 @@ jobs:
         uses: useblacksmith/setup-node@v5
         with:
           node-version: 20
-      - name: Download node artifacts
+      - name: Download all artifacts
         uses: actions/download-artifact@v4
         with:
-          path: bindings/javascript/packages/native
-          pattern: '*.node'
-      - name: Download WASM artifacts
-        uses: actions/download-artifact@v4
-        with:
-          path: bindings/javascript/packages/browser
-          pattern: '*.wasm'
+          path: bindings/javascript
       - name: Install dependencies
         run: yarn install
       - name: Install dependencies
