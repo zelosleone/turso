@@ -20,6 +20,7 @@ test('on-disk db', async () => {
     const rows1 = await stmt1.all([1]);
     expect(rows1).toEqual([{ x: 1 }, { x: 3 }]);
     await db1.close();
+    stmt1.close();
 
     const db2 = await connect(path);
     const stmt2 = db2.prepare("SELECT * FROM t WHERE x % 2 = ?");
@@ -53,3 +54,42 @@ test('blobs', async () => {
     expect(rows).toEqual([{ x: new Uint8Array([16, 32]) }])
 })
 
+
+test('example-1', async () => {
+    const db = await connect(':memory:');
+    await db.exec('CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT, email TEXT)');
+
+    const insert = db.prepare('INSERT INTO users (name, email) VALUES (?, ?)');
+    await insert.run('Alice', 'alice@example.com');
+    await insert.run('Bob', 'bob@example.com');
+
+    const users = await db.prepare('SELECT * FROM users').all();
+    expect(users).toEqual([
+        { id: 1, name: 'Alice', email: 'alice@example.com' },
+        { id: 2, name: 'Bob', email: 'bob@example.com' }
+    ]);
+})
+
+test('example-2', async () => {
+    const db = await connect(':memory:');
+    await db.exec('CREATE TABLE users (name, email)');
+    // Using transactions for atomic operations
+    const transaction = db.transaction(async (users) => {
+        const insert = db.prepare('INSERT INTO users (name, email) VALUES (?, ?)');
+        for (const user of users) {
+            await insert.run(user.name, user.email);
+        }
+    });
+
+    // Execute transaction
+    await transaction([
+        { name: 'Alice', email: 'alice@example.com' },
+        { name: 'Bob', email: 'bob@example.com' }
+    ]);
+
+    const rows = await db.prepare('SELECT * FROM users').all();
+    expect(rows).toEqual([
+        { name: 'Alice', email: 'alice@example.com' },
+        { name: 'Bob', email: 'bob@example.com' }
+    ]);
+})

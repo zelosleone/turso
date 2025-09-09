@@ -127,9 +127,9 @@ fn step_sync(stmt: &Arc<RefCell<Option<turso_core::Statement>>>) -> napi::Result
         .as_mut()
         .ok_or_else(|| Error::new(Status::GenericFailure, "Statement has been finalized"))?;
 
-    let final_result = match stmt.step() {
-        Ok(turso_core::StepResult::Row) => return Ok(STEP_ROW),
-        Ok(turso_core::StepResult::IO) => return Ok(STEP_IO),
+    match stmt.step() {
+        Ok(turso_core::StepResult::Row) => Ok(STEP_ROW),
+        Ok(turso_core::StepResult::IO) => Ok(STEP_IO),
         Ok(turso_core::StepResult::Done) => Ok(STEP_DONE),
         Ok(turso_core::StepResult::Interrupt) => Err(Error::new(
             Status::GenericFailure,
@@ -142,9 +142,7 @@ fn step_sync(stmt: &Arc<RefCell<Option<turso_core::Statement>>>) -> napi::Result
             Status::GenericFailure,
             format!("Step failed: {e}"),
         )),
-    };
-    let _ = stmt_ref.take();
-    final_result
+    }
 }
 
 #[napi]

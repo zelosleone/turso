@@ -414,5 +414,9 @@ class Statement {
       throw convertError(err);
     }
   }
+
+  close() {
+    this.stmt.finalize();
+  }
 }
 export { Database, Statement }

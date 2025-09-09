@@ -42,4 +42,5 @@ export interface NativeStatement {
     columns(): string[];
     row(): any;
     reset();
+    finalize();
 }

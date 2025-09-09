@@ -1,5 +1,5 @@
 import { DatabasePromise, NativeDatabase, DatabaseOpts, SqliteError } from "@tursodatabase/database-core"
-import { connect as nativeConnect, initThreadPool, MainWorker } from "./index.js";
+import { connect as nativeConnect, initThreadPool, MainWorker } from "#index";
 
 let workerRequestId = 0;
 class Database extends DatabasePromise {

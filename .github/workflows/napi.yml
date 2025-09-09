@@ -135,13 +135,15 @@ jobs:
           node-version: ${{ matrix.node }}
       - name: Install dependencies
         run: yarn install
-      - name: Install dependencies
-        run: yarn build
+      - name: Build core
+        run: yarn workspace @tursodatabase/database-core build
+      - name: Build native
+        run: yarn workspace @tursodatabase/database build
       - name: Download artifacts
         uses: actions/download-artifact@v4
         with:
           name: bindings-x86_64-unknown-linux-gnu
-          path: bindings/javascript/
+          path: bindings/javascript/packages/native
       - name: List packages
         run: ls -R .
         shell: bash
@@ -162,10 +164,16 @@ jobs:
         uses: useblacksmith/setup-node@v5
         with:
           node-version: 20
-      - name: Download all artifacts
+      - name: Download native artifacts
         uses: actions/download-artifact@v4
         with:
-          path: bindings/javascript
+          path: bindings/javascript/packages/native
+          pattern: '*.node'
+      - name: Download browser artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: bindings/javascript/packages/browser
+          pattern: '*.wasm'
       - name: Install dependencies
         run: yarn install
       - name: Install dependencies
@@ -176,13 +184,13 @@ jobs:
           if git log -1 --pretty=%B | grep "^Turso [0-9]\+\.[0-9]\+\.[0-9]\+$";
           then
             echo "//registry.npmjs.org/:_authToken=$NPM_TOKEN" >> ~/.npmrc
-            npm publish --access public
+            npm publish --workspaces --access public
           elif git log -1 --pretty=%B | grep "^Turso [0-9]\+\.[0-9]\+\.[0-9]\+";
           then
             echo "//registry.npmjs.org/:_authToken=$NPM_TOKEN" >> ~/.npmrc
-            npm publish --access public --tag next
+            npm publish --workspaces --access public --tag next
           else
-            npm publish --dry-run
+            npm publish --workspaces --dry-run
           fi
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

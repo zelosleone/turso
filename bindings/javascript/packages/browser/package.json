@@ -1,22 +1,22 @@
 {
   "name": "@tursodatabase/database-browser",
-  "version": "0.1.5-pre.4",
+  "version": "0.1.5-pre.3",
   "repository": {
     "type": "git",
     "url": "https://github.com/tursodatabase/turso"
   },
   "license": "MIT",
-  "main": "index.js",
+  "main": "dist/promise.js",
   "packageManager": "yarn@4.9.2",
   "files": [
     "index.js",
     "worker.mjs",
     "turso.wasm32-wasi.wasm",
-    "dist/**"
+    "dist/**",
+    "README.md"
   ],
   "devDependencies": {
     "@napi-rs/cli": "^3.1.5",
-    "@napi-rs/wasm-runtime": "^1.0.3",
     "@vitest/browser": "^3.2.4",
     "playwright": "^1.55.0",
     "typescript": "^5.9.2",
@@ -34,7 +34,11 @@
       "wasm32-wasip1-threads"
     ]
   },
+  "imports": {
+    "#index": "./index.js"
+  },
   "dependencies": {
-    "@tursodatabase/database-core": "^0.1.5-pre.4"
+    "@napi-rs/wasm-runtime": "^1.0.3",
+    "@tursodatabase/database-core": "^0.1.5-pre.3"
   }
 }

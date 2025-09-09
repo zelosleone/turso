@@ -65,3 +65,43 @@ test('blobs', async () => {
     const rows = await db.prepare("SELECT x'1020' as x").all();
     expect(rows).toEqual([{ x: Buffer.from([16, 32]) }])
 })
+
+
+test('example-1', async () => {
+    const db = await connect(':memory:');
+    await db.exec('CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT, email TEXT)');
+
+    const insert = db.prepare('INSERT INTO users (name, email) VALUES (?, ?)');
+    await insert.run('Alice', 'alice@example.com');
+    await insert.run('Bob', 'bob@example.com');
+
+    const users = await db.prepare('SELECT * FROM users').all();
+    expect(users).toEqual([
+        { id: 1, name: 'Alice', email: 'alice@example.com' },
+        { id: 2, name: 'Bob', email: 'bob@example.com' }
+    ]);
+})
+
+test('example-2', async () => {
+    const db = await connect(':memory:');
+    await db.exec('CREATE TABLE users (name, email)');
+    // Using transactions for atomic operations
+    const transaction = db.transaction(async (users) => {
+        const insert = db.prepare('INSERT INTO users (name, email) VALUES (?, ?)');
+        for (const user of users) {
+            await insert.run(user.name, user.email);
+        }
+    });
+
+    // Execute transaction
+    await transaction([
+        { name: 'Alice', email: 'alice@example.com' },
+        { name: 'Bob', email: 'bob@example.com' }
+    ]);
+
+    const rows = await db.prepare('SELECT * FROM users').all();
+    expect(rows).toEqual([
+        { name: 'Alice', email: 'alice@example.com' },
+        { name: 'Bob', email: 'bob@example.com' }
+    ]);
+})

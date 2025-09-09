@@ -1,6 +1,6 @@
 {
   "name": "@tursodatabase/database-core",
-  "version": "0.1.5-pre.4",
+  "version": "0.1.5-pre.3",
   "repository": {
     "type": "git",
     "url": "https://github.com/tursodatabase/turso"
@@ -11,7 +11,8 @@
   "types": "dist/index.d.ts",
   "packageManager": "yarn@4.9.2",
   "files": [
-    "dist/**"
+    "dist/**",
+    "README.md"
   ],
   "devDependencies": {
     "typescript": "^5.9.2"

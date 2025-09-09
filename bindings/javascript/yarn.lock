@@ -1400,7 +1400,7 @@ __metadata:
   dependencies:
     "@napi-rs/cli": "npm:^3.1.5"
     "@napi-rs/wasm-runtime": "npm:^1.0.3"
-    "@tursodatabase/database-core": "npm:^0.1.5-pre.4"
+    "@tursodatabase/database-core": "npm:^0.1.5-pre.3"
     "@vitest/browser": "npm:^3.2.4"
     playwright: "npm:^1.55.0"
     typescript: "npm:^5.9.2"
@@ -1408,7 +1408,7 @@ __metadata:
   languageName: unknown
   linkType: soft
 
-"@tursodatabase/database-core@npm:^0.1.5-pre.4, @tursodatabase/database-core@workspace:packages/core":
+"@tursodatabase/database-core@npm:^0.1.5-pre.3, @tursodatabase/database-core@workspace:packages/core":
   version: 0.0.0-use.local
   resolution: "@tursodatabase/database-core@workspace:packages/core"
   dependencies:
@@ -1421,8 +1421,7 @@ __metadata:
   resolution: "@tursodatabase/database@workspace:packages/native"
   dependencies:
     "@napi-rs/cli": "npm:^3.1.5"
-    "@napi-rs/wasm-runtime": "npm:^1.0.3"
-    "@tursodatabase/database-core": "npm:^0.1.5-pre.4"
+    "@tursodatabase/database-core": "npm:^0.1.5-pre.3"
     "@types/node": "npm:^24.3.1"
     typescript: "npm:^5.9.2"
     vitest: "npm:^3.2.4"
