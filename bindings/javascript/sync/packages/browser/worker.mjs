@@ -1,5 +1,5 @@
 import { instantiateNapiModuleSync, MessageHandler, WASI } from '@napi-rs/wasm-runtime'
-import { OpfsDirectory, workerImports } from '@tursodatabase/database-browser-common';
+import { OpfsDirectory, workerImports } from "@tursodatabase/database-browser-common";
 
 var opfs = new OpfsDirectory();
 var memory = null;

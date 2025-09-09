@@ -1394,12 +1394,21 @@ __metadata:
   languageName: node
   linkType: hard
 
+"@tursodatabase/database-browser-common@npm:^0.1.5, @tursodatabase/database-browser-common@workspace:packages/browser-common":
+  version: 0.0.0-use.local
+  resolution: "@tursodatabase/database-browser-common@workspace:packages/browser-common"
+  dependencies:
+    typescript: "npm:^5.9.2"
+  languageName: unknown
+  linkType: soft
+
 "@tursodatabase/database-browser@workspace:packages/browser":
   version: 0.0.0-use.local
   resolution: "@tursodatabase/database-browser@workspace:packages/browser"
   dependencies:
     "@napi-rs/cli": "npm:^3.1.5"
     "@napi-rs/wasm-runtime": "npm:^1.0.3"
+    "@tursodatabase/database-browser-common": "npm:^0.1.5"
     "@tursodatabase/database-common": "npm:^0.1.5"
     "@vitest/browser": "npm:^3.2.4"
     playwright: "npm:^1.55.0"

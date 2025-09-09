@@ -1,5 +1,5 @@
 {
-  "name": "@tursodatabase/database-browser",
+  "name": "@tursodatabase/sync-browser",
   "version": "0.1.5",
   "repository": {
     "type": "git",
@@ -12,7 +12,7 @@
   "files": [
     "index.js",
     "worker.mjs",
-    "turso.wasm32-wasi.wasm",
+    "sync.wasm32-wasi.wasm",
     "dist/**",
     "README.md"
   ],
@@ -24,13 +24,13 @@
     "vitest": "^3.2.4"
   },
   "scripts": {
-    "napi-build": "napi build --features browser --release --platform --target wasm32-wasip1-threads --no-js --manifest-path ../../Cargo.toml --output-dir . && rm index.d.ts turso.wasi* wasi* browser.js",
+    "napi-build": "napi build --features browser --release --platform --target wasm32-wasip1-threads --no-js --manifest-path ../../Cargo.toml --output-dir . && rm index.d.ts sync.wasi* wasi* browser.js",
     "tsc-build": "npm exec tsc",
     "build": "npm run napi-build && npm run tsc-build",
-    "test": "CI=1 vitest --browser=chromium --run && CI=1 vitest --browser=firefox --run"
+    "test": "VITE_TURSO_DB_URL=http://b--a--a.localhost:10000 CI=1 vitest --browser=chromium --run && VITE_TURSO_DB_URL=http://b--a--a.localhost:10000 CI=1 vitest --browser=firefox --run"
   },
   "napi": {
-    "binaryName": "turso",
+    "binaryName": "sync",
     "targets": [
       "wasm32-wasip1-threads"
     ]
@@ -40,7 +40,7 @@
   },
   "dependencies": {
     "@napi-rs/wasm-runtime": "^1.0.3",
-    "@tursodatabase/database-browser-common": "^0.1.5",
+    "@tursodatabase/sync-common": "^0.1.5",
     "@tursodatabase/database-common": "^0.1.5"
   }
 }

@@ -11,6 +11,8 @@ export declare class Database {
   constructor(path: string, opts?: DatabaseOpts | undefined | null)
   /** Returns whether the database is in memory-only mode. */
   get memory(): boolean
+  /** Returns whether the database is in memory-only mode. */
+  get path(): string
   /** Returns whether the database connection is open. */
   get open(): boolean
   /**
@@ -32,7 +34,7 @@ export declare class Database {
    *
    * # Returns
    */
-  batchAsync(sql: string): Promise<unknown>
+  batchAsync(sql: string): Promise<void>
   /**
    * Prepares a statement for execution.
    *
@@ -91,14 +93,6 @@ export declare class Database {
   ioLoopAsync(): Promise<void>
 }
 
-export declare class Opfs {
-  constructor()
-}
-
-export declare class OpfsFile {
-
-}
-
 /** A prepared statement. */
 export declare class Statement {
   reset(): void
@@ -131,7 +125,7 @@ export declare class Statement {
    * Step the statement and return result code (executed on the background thread):
    * 1 = Row available, 2 = Done, 3 = I/O needed
    */
-  stepAsync(): Promise<unknown>
+  stepAsync(): Promise<number>
   /** Get the current row data according to the presentation mode */
   row(): unknown
   /** Sets the presentation mode to raw. */
@@ -147,19 +141,104 @@ export declare class Statement {
    */
   safeIntegers(toggle?: boolean | undefined | null): void
   /** Get column information for the statement */
-  columns(): unknown[]
+  columns(): Promise<any>
   /** Finalizes the statement. */
   finalize(): void
 }
 
-export declare function connect(path: string, opts?: DatabaseOpts | undefined | null): Promise<unknown>
-
 export interface DatabaseOpts {
   tracing?: string
 }
+export declare class GeneratorHolder {
+  resumeSync(error?: string | undefined | null): GeneratorResponse
+  resumeAsync(error?: string | undefined | null): Promise<unknown>
+}
 
-/**
- * turso-db in the the browser requires explicit thread pool initialization
- * so, we just put no-op task on the thread pool and force emnapi to allocate web worker
- */
-export declare function initThreadPool(): Promise<unknown>
+export declare class JsDataCompletion {
+  poison(err: string): void
+  status(value: number): void
+  pushBuffer(value: Buffer): void
+  pushTransform(values: Array<DatabaseRowTransformResultJs>): void
+  done(): void
+}
+
+export declare class JsProtocolIo {
+  takeRequest(): JsProtocolRequestBytes | null
+}
+
+export declare class JsProtocolRequestBytes {
+  request(): JsProtocolRequest
+  completion(): JsDataCompletion
+}
+
+export declare class SyncEngine {
+  constructor(opts: SyncEngineOpts)
+  init(): GeneratorHolder
+  ioLoopSync(): void
+  /** Runs the I/O loop asynchronously, returning a Promise. */
+  ioLoopAsync(): Promise<void>
+  protocolIo(): JsProtocolRequestBytes | null
+  sync(): GeneratorHolder
+  push(): GeneratorHolder
+  stats(): GeneratorHolder
+  pull(): GeneratorHolder
+  checkpoint(): GeneratorHolder
+  open(): Database
+  close(): void
+}
+
+export declare const enum DatabaseChangeTypeJs {
+  Insert = 0,
+  Update = 1,
+  Delete = 2
+}
+
+export interface DatabaseOpts {
+  path: string
+}
+
+export interface DatabaseRowMutationJs {
+  changeTime: number
+  tableName: string
+  id: number
+  changeType: DatabaseChangeTypeJs
+  before?: Record<string, any>
+  after?: Record<string, any>
+  updates?: Record<string, any>
+}
+
+export interface DatabaseRowStatementJs {
+  sql: string
+  values: Array<any>
+}
+
+export type DatabaseRowTransformResultJs =
+  | { type: 'Keep' }
+  | { type: 'Skip' }
+  | { type: 'Rewrite', stmt: DatabaseRowStatementJs }
+
+export type GeneratorResponse =
+  | { type: 'IO' }
+  | { type: 'Done' }
+  | { type: 'SyncEngineStats', operations: number, mainWal: number, revertWal: number, lastPullUnixTime: number, lastPushUnixTime?: number }
+
+export type JsProtocolRequest =
+  | { type: 'Http', method: string, path: string, body?: Array<number>, headers: Array<[string, string]> }
+  | { type: 'FullRead', path: string }
+  | { type: 'FullWrite', path: string, content: Array<number> }
+  | { type: 'Transform', mutations: Array<DatabaseRowMutationJs> }
+
+export interface SyncEngineOpts {
+  path: string
+  clientName?: string
+  walPullBatchSize?: number
+  tracing?: string
+  tablesIgnore?: Array<string>
+  useTransform: boolean
+  protocolVersion?: SyncEngineProtocolVersion
+}
+
+export declare const enum SyncEngineProtocolVersion {
+  Legacy = 0,
+  V1 = 1
+}

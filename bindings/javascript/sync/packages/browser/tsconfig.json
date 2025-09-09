@@ -8,7 +8,9 @@
     "moduleResolution": "nodenext",
     "outDir": "dist/",
     "lib": [
-      "es2020"
+      "es2020",
+      "DOM",
+      "WebWorker"
     ],
     "paths": {
       "#index": [

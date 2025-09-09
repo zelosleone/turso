@@ -6,6 +6,7 @@ members = [
     "bindings/dart/rust",
     "bindings/java",
     "bindings/javascript",
+    "bindings/javascript/sync",
     "bindings/python",
     "bindings/rust",
     "cli",
@@ -27,7 +28,6 @@ members = [
     "vendored/sqlite3-parser/sqlparser_bench",
     "parser",
     "sync/engine",
-    "sync/javascript",
     "sql_generation",
 ]
 exclude = ["perf/latency/limbo"]
