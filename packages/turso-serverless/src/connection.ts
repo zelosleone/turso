@@ -223,6 +223,17 @@ export class Connection {
     this.isOpen = false;
     await this.session.close();
   }
+
+  reconnect(): void {
+    try {
+      if (this.isOpen) {
+        this.close();
+      }
+    } finally {
+      this.session = new Session(this.config);
+      this.isOpen = true;
+    }
+  }
 }
 
 /**
