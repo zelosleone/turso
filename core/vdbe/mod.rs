@@ -603,19 +603,25 @@ impl Program {
 
                     let view_name = &views[*current_index];
 
-                    let delta = self
+                    let table_deltas = self
                         .connection
                         .view_transaction_states
                         .get(view_name)
                         .unwrap()
-                        .get_delta();
+                        .get_table_deltas();
 
                     let schema = self.connection.schema.borrow();
                     if let Some(view_mutex) = schema.get_materialized_view(view_name) {
                         let mut view = view_mutex.lock().unwrap();
 
+                        // Create a DeltaSet from the per-table deltas
+                        let mut delta_set = crate::incremental::compiler::DeltaSet::new();
+                        for (table_name, delta) in table_deltas {
+                            delta_set.insert(table_name, delta);
+                        }
+
                         // Handle I/O from merge_delta - pass pager, circuit will create its own cursor
-                        match view.merge_delta(&delta, pager.clone())? {
+                        match view.merge_delta(delta_set, pager.clone())? {
                             IOResult::Done(_) => {
                                 // Move to next view
                                 state.view_delta_state = ViewDeltaCommitState::Processing {

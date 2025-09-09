@@ -55,47 +55,52 @@ impl fmt::Debug for PopulateState {
 /// Per-connection transaction state for incremental views
 #[derive(Debug, Clone, Default)]
 pub struct ViewTransactionState {
-    // Per-connection delta for uncommitted changes (contains both weights and values)
+    // Per-table deltas for uncommitted changes
+    // Maps table_name -> Delta for that table
     // Using RefCell for interior mutability
-    delta: RefCell<Delta>,
+    table_deltas: RefCell<HashMap<String, Delta>>,
 }
 
 impl ViewTransactionState {
     /// Create a new transaction state
     pub fn new() -> Self {
         Self {
-            delta: RefCell::new(Delta::new()),
+            table_deltas: RefCell::new(HashMap::new()),
         }
     }
 
-    /// Insert a row into the delta
-    pub fn insert(&self, key: i64, values: Vec<Value>) {
-        self.delta.borrow_mut().insert(key, values);
+    /// Insert a row into the delta for a specific table
+    pub fn insert(&self, table_name: &str, key: i64, values: Vec<Value>) {
+        let mut deltas = self.table_deltas.borrow_mut();
+        let delta = deltas.entry(table_name.to_string()).or_default();
+        delta.insert(key, values);
     }
 
-    /// Delete a row from the delta
-    pub fn delete(&self, key: i64, values: Vec<Value>) {
-        self.delta.borrow_mut().delete(key, values);
+    /// Delete a row from the delta for a specific table
+    pub fn delete(&self, table_name: &str, key: i64, values: Vec<Value>) {
+        let mut deltas = self.table_deltas.borrow_mut();
+        let delta = deltas.entry(table_name.to_string()).or_default();
+        delta.delete(key, values);
     }
 
     /// Clear all changes in the delta
     pub fn clear(&self) {
-        self.delta.borrow_mut().changes.clear();
+        self.table_deltas.borrow_mut().clear();
     }
 
-    /// Get a clone of the current delta
-    pub fn get_delta(&self) -> Delta {
-        self.delta.borrow().clone()
+    /// Get deltas organized by table
+    pub fn get_table_deltas(&self) -> HashMap<String, Delta> {
+        self.table_deltas.borrow().clone()
     }
 
     /// Check if the delta is empty
     pub fn is_empty(&self) -> bool {
-        self.delta.borrow().is_empty()
+        self.table_deltas.borrow().values().all(|d| d.is_empty())
     }
 
     /// Returns how many elements exist in the delta.
     pub fn len(&self) -> usize {
-        self.delta.borrow().len()
+        self.table_deltas.borrow().values().map(|d| d.len()).sum()
     }
 }
 
@@ -604,8 +609,13 @@ impl IncrementalView {
                 let mut single_row_delta = Delta::new();
                 single_row_delta.insert(rowid, values.clone());
 
+                // Create a DeltaSet with this delta for the first table (for now)
+                let mut delta_set = DeltaSet::new();
+                // TODO: When we support JOINs, determine which table this row came from
+                delta_set.insert(self.referenced_tables[0].name.clone(), single_row_delta);
+
                 // Process the pending row with the pager
-                match self.merge_delta(&single_row_delta, pager.clone())? {
+                match self.merge_delta(delta_set, pager.clone())? {
                     IOResult::Done(_) => {
                         // Row processed successfully, continue to next row
                         rows_processed += 1;
@@ -671,8 +681,13 @@ impl IncrementalView {
                         let mut single_row_delta = Delta::new();
                         single_row_delta.insert(rowid, values.clone());
 
+                        // Create a DeltaSet with this delta for the first table (for now)
+                        let mut delta_set = DeltaSet::new();
+                        // TODO: When we support JOINs, determine which table this row came from
+                        delta_set.insert(self.referenced_tables[0].name.clone(), single_row_delta);
+
                         // Process this single row through merge_delta with the pager
-                        match self.merge_delta(&single_row_delta, pager.clone())? {
+                        match self.merge_delta(delta_set, pager.clone())? {
                             IOResult::Done(_) => {
                                 // Row processed successfully, continue to next row
                                 rows_processed += 1;
@@ -801,24 +816,19 @@ impl IncrementalView {
         None
     }
 
-    /// Merge a delta of changes into the view's current state
+    /// Merge a delta set of changes into the view's current state
     pub fn merge_delta(
         &mut self,
-        delta: &Delta,
+        delta_set: DeltaSet,
         pager: std::rc::Rc<crate::Pager>,
     ) -> crate::Result<IOResult<()>> {
-        // Early return if delta is empty
-        if delta.is_empty() {
+        // Early return if all deltas are empty
+        if delta_set.is_empty() {
             return Ok(IOResult::Done(()));
         }
 
-        // Use the circuit to process the delta and write to btree
-        let mut input_data = HashMap::new();
-        // For now, assume the delta applies to the first table
-        // TODO: This needs to be improved to handle deltas for multiple tables
-        if !self.referenced_tables.is_empty() {
-            input_data.insert(self.referenced_tables[0].name.clone(), delta.clone());
-        }
+        // Use the circuit to process the deltas and write to btree
+        let input_data = delta_set.into_map();
 
         // The circuit now handles all btree I/O internally with the provided pager
         let _delta = return_if_io!(self.circuit.commit(input_data, pager));

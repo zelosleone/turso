@@ -148,6 +148,16 @@ impl DeltaSet {
             .cloned()
             .unwrap_or_else(Delta::new)
     }
+
+    /// Convert DeltaSet into the underlying HashMap
+    pub fn into_map(self) -> HashMap<String, Delta> {
+        self.deltas
+    }
+
+    /// Check if all deltas in the set are empty
+    pub fn is_empty(&self) -> bool {
+        self.deltas.values().all(|d| d.is_empty())
+    }
 }
 
 /// Represents a DBSP operator in the compiled circuit

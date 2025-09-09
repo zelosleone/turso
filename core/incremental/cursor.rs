@@ -91,14 +91,12 @@ impl MaterializedViewCursor {
 
         // Get the view and the current transaction state
         let mut view_guard = self.view.lock().unwrap();
-        let tx_delta = self.tx_state.get_delta();
+        let table_deltas = self.tx_state.get_table_deltas();
 
-        // Process the delta through the circuit to get materialized changes
+        // Process the deltas through the circuit to get materialized changes
         let mut uncommitted = DeltaSet::new();
-        // Get the first table name from the view's referenced tables
-        let table_names = view_guard.get_referenced_table_names();
-        if !table_names.is_empty() {
-            uncommitted.insert(table_names[0].clone(), tx_delta);
+        for (table_name, delta) in table_deltas {
+            uncommitted.insert(table_name, delta);
         }
 
         let processed_delta = return_if_io!(view_guard.execute_with_uncommitted(
@@ -396,9 +394,9 @@ mod tests {
     ) {
         for (rowid, values, weight) in changes {
             if weight > 0 {
-                tx_state.insert(rowid, values);
+                tx_state.insert("test_table", rowid, values);
             } else if weight < 0 {
-                tx_state.delete(rowid, values);
+                tx_state.delete("test_table", rowid, values);
             }
         }
     }
@@ -669,7 +667,7 @@ mod tests {
         assert_eq!(result, SeekResult::NotFound);
 
         // Add row 2 to uncommitted
-        tx_state.insert(2, vec![Value::Integer(2), Value::Integer(20)]);
+        tx_state.insert("test_table", 2, vec![Value::Integer(2), Value::Integer(20)]);
 
         // Now seek for row 2 finds it
         let result = pager
