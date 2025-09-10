@@ -590,19 +590,30 @@ mod tests {
                 let predicate_col = rng.random_range(0..num_cols);
                 let predicate_value = rng.random_range(0..1000);
 
-                let omit_where = rng.random_bool(0.05);
+                enum WhereClause {
+                    Normal,
+                    Gaps,
+                    Omit,
+                }
+
+                let where_kind = match rng.random_range(0..10) {
+                    0..8 => WhereClause::Normal,
+                    8 => WhereClause::Gaps,
+                    9 => WhereClause::Omit,
+                    _ => unreachable!(),
+                };
+
+                let where_clause = match where_kind {
+                    WhereClause::Normal => format!("WHERE c{predicate_col} {comparison} {predicate_value}"),
+                    WhereClause::Gaps => format!("WHERE c{predicate_col} {comparison} {predicate_value} AND c{predicate_col} % 2 = 0"),
+                    WhereClause::Omit => "".to_string(),
+                };
 
                 let query = if do_update {
                     let new_y = rng.random_range(0..1000);
-                    if omit_where {
-                        format!("UPDATE t SET c{affected_col} = {new_y}")
-                    } else {
-                        format!("UPDATE t SET c{affected_col} = {new_y} WHERE c{predicate_col} {comparison} {predicate_value}")
-                    }
-                } else if omit_where {
-                    "DELETE FROM t".to_string()
+                    format!("UPDATE t SET c{affected_col} = {new_y} {where_clause}")
                 } else {
-                    format!("DELETE FROM t WHERE c{predicate_col} {comparison} {predicate_value}")
+                    format!("DELETE FROM t {where_clause}")
                 };
 
                 dml_statements.push(query.clone());
