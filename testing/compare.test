@@ -254,3 +254,21 @@ foreach {testname lhs rhs ans} {
 } {
   do_execsql_test compare-is-not-$testname "SELECT $lhs is not $rhs" $::ans
 }
+
+# github-issue: 2957.
+do_execsql_test compare-int-float-setup {
+  CREATE TABLE t1(i INTEGER);
+  INSERT INTO t1 VALUES (0), (-1), (1);
+} {}
+
+do_execsql_test compare-int-float-lte-negative-zero {
+  SELECT i FROM t1 WHERE i <= -0.0 ORDER BY i;
+} {-1 0}
+
+do_execsql_test compare-int-float-lt-negative-zero {
+  SELECT i FROM t1 WHERE i < -0.0 ORDER BY i;
+} {-1}
+
+do_execsql_test compare-int-float-cleanup {
+  DROP TABLE t1;
+} {}
