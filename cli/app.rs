@@ -575,7 +575,7 @@ impl Limbo {
 
             // if the address is not the same, meaning the string has been reallocated
             // so we just drop the part we took earlier
-            if ptr.addr() != old_address {
+            if ptr.addr() != old_address || !app.input_buff.is_empty() {
                 return;
             }
 
