@@ -515,7 +515,7 @@ mod tests {
         let (mut rng, seed) = rng_from_time();
         println!("index_scan_single_key_mutation_fuzz seed: {seed}");
 
-        const OUTER_ITERATIONS: usize = 30;
+        const OUTER_ITERATIONS: usize = 100;
         for i in 0..OUTER_ITERATIONS {
             println!(
                 "table_index_mutation_fuzz iteration {}/{}",
@@ -580,7 +580,7 @@ mod tests {
             limbo_exec_rows(&limbo_db, &limbo_conn, &insert);
 
             const COMPARISONS: [&str; 3] = ["=", "<", ">"];
-            const INNER_ITERATIONS: usize = 100;
+            const INNER_ITERATIONS: usize = 20;
 
             for _ in 0..INNER_ITERATIONS {
                 let do_update = rng.random_range(0..2) == 0;
@@ -590,11 +590,30 @@ mod tests {
                 let predicate_col = rng.random_range(0..num_cols);
                 let predicate_value = rng.random_range(0..1000);
 
+                enum WhereClause {
+                    Normal,
+                    Gaps,
+                    Omit,
+                }
+
+                let where_kind = match rng.random_range(0..10) {
+                    0..8 => WhereClause::Normal,
+                    8 => WhereClause::Gaps,
+                    9 => WhereClause::Omit,
+                    _ => unreachable!(),
+                };
+
+                let where_clause = match where_kind {
+                    WhereClause::Normal => format!("WHERE c{predicate_col} {comparison} {predicate_value}"),
+                    WhereClause::Gaps => format!("WHERE c{predicate_col} {comparison} {predicate_value} AND c{predicate_col} % 2 = 0"),
+                    WhereClause::Omit => "".to_string(),
+                };
+
                 let query = if do_update {
                     let new_y = rng.random_range(0..1000);
-                    format!("UPDATE t SET c{affected_col} = {new_y} WHERE c{predicate_col} {comparison} {predicate_value}")
+                    format!("UPDATE t SET c{affected_col} = {new_y} {where_clause}")
                 } else {
-                    format!("DELETE FROM t WHERE c{predicate_col} {comparison} {predicate_value}")
+                    format!("DELETE FROM t {where_clause}")
                 };
 
                 dml_statements.push(query.clone());
