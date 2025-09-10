@@ -545,7 +545,9 @@ pub struct BTreeCursor {
     move_to_state: MoveToState,
     /// Whether the next call to [BTreeCursor::next()] should be a no-op.
     /// This is currently only used after a delete operation causes a rebalancing.
-    skip_advance: Cell<bool>,
+    /// Advancing is only skipped if the cursor is currently pointing to a valid record
+    /// when next() is called.
+    pub skip_advance: Cell<bool>,
 }
 
 /// We store the cell index and cell count for each page in the stack.
