@@ -40,6 +40,7 @@
   },
   "dependencies": {
     "@napi-rs/wasm-runtime": "^1.0.3",
+    "@tursodatabase/database-browser-common": "^0.1.5",
     "@tursodatabase/database-common": "^0.1.5",
     "@tursodatabase/sync-common": "^0.1.5"
   }

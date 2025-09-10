@@ -1443,6 +1443,7 @@ __metadata:
   dependencies:
     "@napi-rs/cli": "npm:^3.1.5"
     "@napi-rs/wasm-runtime": "npm:^1.0.3"
+    "@tursodatabase/database-browser-common": "npm:^0.1.5"
     "@tursodatabase/database-common": "npm:^0.1.5"
     "@tursodatabase/sync-common": "npm:^0.1.5"
     "@vitest/browser": "npm:^3.2.4"
