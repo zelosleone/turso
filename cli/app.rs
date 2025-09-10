@@ -798,7 +798,7 @@ impl Limbo {
                     }
 
                     if !table.is_empty() {
-                        write!(self, "{table}")?;
+                        writeln!(self, "{table}")?;
                     }
                 }
                 OutputMode::Line => {
