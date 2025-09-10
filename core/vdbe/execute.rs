@@ -3012,10 +3012,14 @@ pub fn seek_internal(
 
                         // this same logic applies for indexes, but the next/prev record is expected to be found in the parent page's
                         // divider cell.
+                        turso_assert!(
+                            !cursor.skip_advance.get(),
+                            "skip_advance should not be true in the middle of a seek operation"
+                        );
                         let result = match op {
                             // deliberately call get_next_record() instead of next() to avoid skip_advance triggering unwantedly
-                            SeekOp::GT | SeekOp::GE { .. } => cursor.get_next_record()?,
-                            SeekOp::LT | SeekOp::LE { .. } => cursor.get_prev_record()?,
+                            SeekOp::GT | SeekOp::GE { .. } => cursor.next()?,
+                            SeekOp::LT | SeekOp::LE { .. } => cursor.prev()?,
                         };
                         match result {
                             IOResult::Done(found) => {
