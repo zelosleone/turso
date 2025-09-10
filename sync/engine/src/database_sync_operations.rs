@@ -752,7 +752,7 @@ pub async fn push_logical_changes<C: ProtocolIO, Ctx>(
     }
 
     let mut transformed = if opts.use_transform {
-        Some(apply_transformation(&coro, client, &local_changes, &generator).await?)
+        Some(apply_transformation(coro, client, &local_changes, &generator).await?)
     } else {
         None
     };
@@ -779,9 +779,7 @@ pub async fn push_logical_changes<C: ProtocolIO, Ctx>(
         );
         assert!(
             last_change_id.is_none() || last_change_id.unwrap() < change_id,
-            "change id must be strictly increasing: last_change_id={:?}, change.change_id={}",
-            last_change_id,
-            change_id
+            "change id must be strictly increasing: last_change_id={last_change_id:?}, change.change_id={change_id}"
         );
         rows_changed += 1;
         // we give user full control over CDC table - so let's not emit assert here for now
@@ -945,11 +943,11 @@ pub async fn apply_transformation<Ctx, P: ProtocolIO>(
 ) -> Result<Vec<DatabaseRowTransformResult>> {
     let mut mutations = Vec::new();
     for change in changes {
-        let replay_info = generator.replay_info(&coro, &change).await?;
-        mutations.push(generator.create_mutation(&replay_info, &change)?);
+        let replay_info = generator.replay_info(coro, change).await?;
+        mutations.push(generator.create_mutation(&replay_info, change)?);
     }
     let completion = client.transform(mutations)?;
-    let transformed = wait_all_results(&coro, &completion).await?;
+    let transformed = wait_all_results(coro, &completion).await?;
     if transformed.len() != changes.len() {
         return Err(Error::DatabaseSyncEngineError(format!(
             "unexpected result from custom transformation: mismatch in shapes: {} != {}",

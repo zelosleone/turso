@@ -89,7 +89,7 @@ fn resume_sync(holder: &GeneratorHolder, error: Option<String>) -> napi::Result<
 impl GeneratorHolder {
     #[napi]
     pub fn resume_sync(&self, error: Option<String>) -> napi::Result<GeneratorResponse> {
-        resume_sync(&self, error)
+        resume_sync(self, error)
     }
 
     #[napi]

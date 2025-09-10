@@ -218,6 +218,7 @@ impl SyncEngine {
             Ok(())
         });
         Ok(GeneratorHolder {
+            #[allow(clippy::arc_with_non_send_sync)]
             generator: Arc::new(Mutex::new(generator)),
             response: Arc::new(Mutex::new(None)),
         })

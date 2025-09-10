@@ -577,7 +577,7 @@ impl<P: ProtocolIO> DatabaseSyncEngine<P> {
             let mut transformed = if self.opts.use_transform {
                 Some(
                     apply_transformation(
-                        &coro,
+                        coro,
                         self.protocol.as_ref(),
                         &local_changes,
                         &replay.generator,
