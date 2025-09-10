@@ -546,20 +546,19 @@ impl Limbo {
         }
     }
 
-    fn reset_line(&mut self) -> rustyline::Result<()> {
+    fn reset_line(&mut self) {
         // Entry is auto added to history
         // self.rl.add_history_entry(line.to_owned())?;
         self.interrupt_count.store(0, Ordering::Release);
-        Ok(())
     }
 
     // consume will consume `input_buff`
-    pub fn consume(&mut self, flush: bool) -> anyhow::Result<()> {
+    pub fn consume(&mut self, flush: bool) {
         if self.input_buff.trim().is_empty() {
-            return Ok(());
+            return;
         }
 
-        self.reset_line()?;
+        self.reset_line();
 
         // we are taking ownership of input_buff here
         // its always safe because we split the string in two parts
@@ -615,8 +614,6 @@ impl Limbo {
                 self.set_multiline_prompt();
             }
         }
-
-        Ok(())
     }
 
     pub fn handle_dot_command(&mut self, line: &str) {
