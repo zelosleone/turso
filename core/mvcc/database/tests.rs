@@ -1309,7 +1309,7 @@ fn test_concurrent_writes() {
                 }
             }
         }
-        db.get_db().io.run_once().unwrap();
+        db.get_db().io.step().unwrap();
 
         if all_finished {
             break;

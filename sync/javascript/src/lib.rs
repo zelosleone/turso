@@ -252,7 +252,7 @@ impl SyncEngine {
 
     #[napi]
     pub fn io_loop_sync(&self) -> napi::Result<()> {
-        self.io.run_once().map_err(|e| {
+        self.io.step().map_err(|e| {
             napi::Error::new(napi::Status::GenericFailure, format!("IO error: {e}"))
         })?;
         Ok(())

@@ -84,7 +84,7 @@ pub trait IO: Clock + Send + Sync {
     // remove_file is used in the sync-engine
     fn remove_file(&self, path: &str) -> Result<()>;
 
-    fn run_once(&self) -> Result<()> {
+    fn step(&self) -> Result<()> {
         Ok(())
     }
 
@@ -99,7 +99,7 @@ pub trait IO: Clock + Send + Sync {
 
     fn wait_for_completion(&self, c: Completion) -> Result<()> {
         while !c.finished() {
-            self.run_once()?
+            self.step()?
         }
         if let Some(Some(err)) = c.inner.result.get().copied() {
             return Err(err.into());

@@ -2212,7 +2212,7 @@ impl Statement {
     }
 
     pub fn run_once(&self) -> Result<()> {
-        let res = self.pager.io.run_once();
+        let res = self.pager.io.step();
         if self.program.connection.is_nested_stmt.get() {
             return res;
         }
