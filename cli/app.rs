@@ -150,7 +150,7 @@ macro_rules! row_step_result_query {
 
 impl Limbo {
     pub fn new() -> anyhow::Result<(Self, WorkerGuard)> {
-        let opts = Opts::parse();
+        let mut opts = Opts::parse();
         let guard = Self::init_tracing(&opts)?;
 
         let db_file = opts
@@ -203,7 +203,8 @@ impl Limbo {
             })
             .expect("Error setting Ctrl-C handler");
         }
-        let sql = opts.sql.clone();
+        let sql = opts.sql.take();
+        let has_sql = sql.is_some();
         let quiet = opts.quiet;
         let config = Config::for_output_mode(opts.output_mode);
         let mut app = Self {
@@ -212,12 +213,12 @@ impl Limbo {
             writer: Some(get_writer(&opts.output)),
             conn,
             interrupt_count,
-            input_buff: ManuallyDrop::new(String::new()),
+            input_buff: ManuallyDrop::new(sql.unwrap_or_default()),
             opts: Settings::from(opts),
             rl: None,
             config: Some(config),
         };
-        app.first_run(sql, quiet)?;
+        app.first_run(has_sql, quiet)?;
         Ok((app, guard))
     }
 
@@ -236,14 +237,14 @@ impl Limbo {
         self
     }
 
-    fn first_run(&mut self, sql: Option<String>, quiet: bool) -> Result<(), LimboError> {
+    fn first_run(&mut self, has_sql: bool, quiet: bool) -> Result<(), LimboError> {
         // Skip startup messages and SQL execution in MCP mode
         if self.is_mcp_mode() {
             return Ok(());
         }
 
-        if let Some(sql) = sql {
-            self.handle_first_input(&sql)?;
+        if has_sql {
+            self.handle_first_input()?;
         }
         if !quiet {
             self.writeln_fmt(format_args!("Turso v{}", env!("CARGO_PKG_VERSION")))?;
@@ -256,12 +257,8 @@ impl Limbo {
         Ok(())
     }
 
-    fn handle_first_input(&mut self, cmd: &str) -> Result<(), LimboError> {
-        if cmd.trim().starts_with('.') {
-            self.handle_dot_command(&cmd[1..]);
-        } else {
-            self.run_query(cmd);
-        }
+    fn handle_first_input(&mut self) -> Result<(), LimboError> {
+        self.consume(true);
         self.close_conn()?;
         std::process::exit(0);
     }
