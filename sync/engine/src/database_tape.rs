@@ -716,7 +716,7 @@ mod tests {
         });
         let rows = loop {
             match gen.resume_with(Ok(())) {
-                genawaiter::GeneratorState::Yielded(..) => io.run_once().unwrap(),
+                genawaiter::GeneratorState::Yielded(..) => io.step().unwrap(),
                 genawaiter::GeneratorState::Complete(result) => break result,
             }
         };
@@ -750,7 +750,7 @@ mod tests {
         });
         let changes = loop {
             match gen.resume_with(Ok(())) {
-                genawaiter::GeneratorState::Yielded(..) => io.run_once().unwrap(),
+                genawaiter::GeneratorState::Yielded(..) => io.step().unwrap(),
                 genawaiter::GeneratorState::Complete(result) => break result,
             }
         };
@@ -841,7 +841,7 @@ mod tests {
         });
         let rows = loop {
             match gen.resume_with(Ok(())) {
-                genawaiter::GeneratorState::Yielded(..) => io.run_once().unwrap(),
+                genawaiter::GeneratorState::Yielded(..) => io.step().unwrap(),
                 genawaiter::GeneratorState::Complete(rows) => break rows,
             }
         };
@@ -921,7 +921,7 @@ mod tests {
         });
         let rows = loop {
             match gen.resume_with(Ok(())) {
-                genawaiter::GeneratorState::Yielded(..) => io.run_once().unwrap(),
+                genawaiter::GeneratorState::Yielded(..) => io.step().unwrap(),
                 genawaiter::GeneratorState::Complete(rows) => break rows,
             }
         };
@@ -992,7 +992,7 @@ mod tests {
         });
         let rows = loop {
             match gen.resume_with(Ok(())) {
-                genawaiter::GeneratorState::Yielded(..) => io.run_once().unwrap(),
+                genawaiter::GeneratorState::Yielded(..) => io.step().unwrap(),
                 genawaiter::GeneratorState::Complete(rows) => break rows,
             }
         };
@@ -1129,7 +1129,7 @@ mod tests {
         });
         loop {
             match gen.resume_with(Ok(())) {
-                genawaiter::GeneratorState::Yielded(..) => io.run_once().unwrap(),
+                genawaiter::GeneratorState::Yielded(..) => io.step().unwrap(),
                 genawaiter::GeneratorState::Complete(result) => {
                     result.unwrap();
                     break;
@@ -1214,7 +1214,7 @@ mod tests {
         });
         loop {
             match gen.resume_with(Ok(())) {
-                genawaiter::GeneratorState::Yielded(..) => io.run_once().unwrap(),
+                genawaiter::GeneratorState::Yielded(..) => io.step().unwrap(),
                 genawaiter::GeneratorState::Complete(result) => {
                     result.unwrap();
                     break;
@@ -1289,7 +1289,7 @@ mod tests {
         });
         loop {
             match gen.resume_with(Ok(())) {
-                genawaiter::GeneratorState::Yielded(..) => io.run_once().unwrap(),
+                genawaiter::GeneratorState::Yielded(..) => io.step().unwrap(),
                 genawaiter::GeneratorState::Complete(result) => {
                     result.unwrap();
                     break;
@@ -1385,7 +1385,7 @@ mod tests {
         });
         loop {
             match gen.resume_with(Ok(())) {
-                genawaiter::GeneratorState::Yielded(..) => io.run_once().unwrap(),
+                genawaiter::GeneratorState::Yielded(..) => io.step().unwrap(),
                 genawaiter::GeneratorState::Complete(result) => {
                     result.unwrap();
                     break;
