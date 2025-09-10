@@ -2187,9 +2187,14 @@ pub fn op_transaction(
             match pager.begin_write_tx()? {
                 IOResult::Done(r) => {
                     if let LimboResult::Busy = r {
-                        pager.end_read_tx()?;
-                        conn.transaction_state.replace(TransactionState::None);
-                        conn.auto_commit.replace(true);
+                        // We failed to upgrade to write transaction so put the transaction into its original state.
+                        // That is, if the transaction had not started, end the read transaction so that next time we
+                        // start a new one.
+                        if matches!(current_state, TransactionState::None) {
+                            pager.end_read_tx()?;
+                            conn.transaction_state.replace(TransactionState::None);
+                        }
+                        assert_eq!(conn.transaction_state.get(), current_state);
                         return Ok(InsnFunctionStepResult::Busy);
                     }
                 }

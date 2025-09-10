@@ -572,11 +572,6 @@ async fn multiple_connections_fuzz(mvcc_enabled: bool) {
                             }
                             Err(e) => {
                                 println!("Connection {conn_id}(op={op_num}) FAILED: {e}");
-                                if let Some(tx_id) = *current_tx_id {
-                                    shared_shadow_db.rollback_transaction(tx_id);
-                                    *current_tx_id = None;
-                                }
-
                                 // Check if it's an acceptable error
                                 if !e.to_string().contains("database is locked") {
                                     panic!("Unexpected error during commit: {e}");
@@ -597,9 +592,6 @@ async fn multiple_connections_fuzz(mvcc_enabled: bool) {
                                 }
                                 Err(e) => {
                                     println!("Connection {conn_id}(op={op_num}) FAILED: {e}");
-                                    shared_shadow_db.rollback_transaction(tx_id);
-                                    *current_tx_id = None;
-
                                     // Check if it's an acceptable error
                                     if !e.to_string().contains("Busy")
                                         && !e.to_string().contains("database is locked")
@@ -646,10 +638,6 @@ async fn multiple_connections_fuzz(mvcc_enabled: bool) {
                             }
                             Err(e) => {
                                 println!("Connection {conn_id}(op={op_num}) FAILED: {e}");
-                                if let Some(tx_id) = *current_tx_id {
-                                    shared_shadow_db.rollback_transaction(tx_id);
-                                    *current_tx_id = None;
-                                }
                                 // Check if it's an acceptable error
                                 if !e.to_string().contains("database is locked") {
                                     panic!("Unexpected error during insert: {e}");
@@ -687,10 +675,6 @@ async fn multiple_connections_fuzz(mvcc_enabled: bool) {
                             }
                             Err(e) => {
                                 println!("Connection {conn_id}(op={op_num}) FAILED: {e}");
-                                if let Some(tx_id) = *current_tx_id {
-                                    shared_shadow_db.rollback_transaction(tx_id);
-                                    *current_tx_id = None;
-                                }
                                 // Check if it's an acceptable error
                                 if !e.to_string().contains("database is locked") {
                                     panic!("Unexpected error during update: {e}");
@@ -723,10 +707,6 @@ async fn multiple_connections_fuzz(mvcc_enabled: bool) {
                             }
                             Err(e) => {
                                 println!("Connection {conn_id}(op={op_num}) FAILED: {e}");
-                                if let Some(tx_id) = *current_tx_id {
-                                    shared_shadow_db.rollback_transaction(tx_id);
-                                    *current_tx_id = None;
-                                }
                                 // Check if it's an acceptable error
                                 if !e.to_string().contains("database is locked") {
                                     panic!("Unexpected error during delete: {e}");
@@ -803,12 +783,7 @@ async fn multiple_connections_fuzz(mvcc_enabled: bool) {
                             Err(e) => {
                                 println!("Connection {conn_id}(op={op_num}) FAILED: {e}");
                                 // Check if it's an acceptable error
-                                if e.to_string().contains("database is locked") {
-                                    if let Some(tx_id) = *current_tx_id {
-                                        shared_shadow_db.rollback_transaction(tx_id);
-                                        *current_tx_id = None;
-                                    }
-                                } else {
+                                if !e.to_string().contains("database is locked") {
                                     panic!("Unexpected error during alter table: {e}");
                                 }
                             }
