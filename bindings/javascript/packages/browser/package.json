@@ -1,6 +1,6 @@
 {
   "name": "@tursodatabase/database-browser",
-  "version": "0.1.5-pre.5",
+  "version": "0.1.5",
   "repository": {
     "type": "git",
     "url": "https://github.com/tursodatabase/turso"
@@ -40,6 +40,6 @@
   },
   "dependencies": {
     "@napi-rs/wasm-runtime": "^1.0.3",
-    "@tursodatabase/database-common": "^0.1.5-pre.5"
+    "@tursodatabase/database-common": "^0.1.5"
   }
 }
