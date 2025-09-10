@@ -969,20 +969,26 @@ impl Connection {
             .trim();
         self.maybe_update_schema()?;
         let pager = self.pager.borrow().clone();
+        let mode = QueryMode::new(&cmd);
         match cmd {
-            Cmd::Stmt(stmt) => {
+            Cmd::Stmt(stmt) | Cmd::Explain(stmt) => {
                 let program = translate::translate(
                     self.schema.borrow().deref(),
                     stmt,
                     pager.clone(),
                     self.clone(),
                     &syms,
-                    QueryMode::Normal,
+                    mode,
                     input,
                 )?;
-                Ok(Statement::new(program, self._db.mv_store.clone(), pager))
+                Ok(Statement::new(
+                    program,
+                    self._db.mv_store.clone(),
+                    pager,
+                    mode,
+                ))
             }
-            _ => unreachable!(),
+            Cmd::ExplainQueryPlan(_) => todo!(),
         }
     }
 
@@ -1116,22 +1122,23 @@ impl Connection {
             let input = str::from_utf8(&sql.as_bytes()[..byte_offset_end])
                 .unwrap()
                 .trim();
+            let mode = QueryMode::new(&cmd);
             match cmd {
-                Cmd::Stmt(stmt) => {
+                Cmd::Stmt(stmt) | Cmd::Explain(stmt) => {
                     let program = translate::translate(
                         self.schema.borrow().deref(),
                         stmt,
                         pager.clone(),
                         self.clone(),
                         &syms,
-                        QueryMode::Normal,
+                        mode,
                         input,
                     )?;
 
-                    Statement::new(program, self._db.mv_store.clone(), pager.clone())
+                    Statement::new(program, self._db.mv_store.clone(), pager.clone(), mode)
                         .run_ignore_rows()?;
                 }
-                _ => unreachable!(),
+                Cmd::ExplainQueryPlan(_) => todo!(),
             }
         }
         Ok(())
@@ -1167,6 +1174,7 @@ impl Connection {
         }
         let syms = self.syms.borrow();
         let pager = self.pager.borrow().clone();
+        let mode = QueryMode::new(&cmd);
         match cmd {
             Cmd::Stmt(ref stmt) | Cmd::Explain(ref stmt) => {
                 let program = translate::translate(
@@ -1175,10 +1183,10 @@ impl Connection {
                     pager.clone(),
                     self.clone(),
                     &syms,
-                    cmd.into(),
+                    mode,
                     input,
                 )?;
-                let stmt = Statement::new(program, self._db.mv_store.clone(), pager);
+                let stmt = Statement::new(program, self._db.mv_store.clone(), pager, mode);
                 Ok(Some(stmt))
             }
             Cmd::ExplainQueryPlan(stmt) => {
@@ -1225,32 +1233,20 @@ impl Connection {
                 .unwrap()
                 .trim();
             self.maybe_update_schema()?;
+            let mode = QueryMode::new(&cmd);
             match cmd {
-                Cmd::Explain(stmt) => {
-                    let program = translate::translate(
-                        self.schema.borrow().deref(),
-                        stmt,
-                        pager,
-                        self.clone(),
-                        &syms,
-                        QueryMode::Explain,
-                        input,
-                    )?;
-                    let _ = std::io::stdout().write_all(program.explain().as_bytes());
-                }
                 Cmd::ExplainQueryPlan(_stmt) => todo!(),
-                Cmd::Stmt(stmt) => {
+                Cmd::Stmt(stmt) | Cmd::Explain(stmt) => {
                     let program = translate::translate(
                         self.schema.borrow().deref(),
                         stmt,
                         pager.clone(),
                         self.clone(),
                         &syms,
-                        QueryMode::Normal,
+                        mode,
                         input,
                     )?;
-
-                    Statement::new(program, self._db.mv_store.clone(), pager.clone())
+                    Statement::new(program, self._db.mv_store.clone(), pager.clone(), mode)
                         .run_ignore_rows()?;
                 }
             }
@@ -2088,10 +2084,18 @@ pub struct Statement {
     /// Used to determine whether we need to check for schema changes when
     /// starting a transaction.
     accesses_db: bool,
+
+    /// indicates if the statement is a NORMAL/EXPLAIN/EXPLAIN QUERY PLAN
+    query_mode: QueryMode,
 }
 
 impl Statement {
-    pub fn new(program: vdbe::Program, mv_store: Option<Arc<MvStore>>, pager: Rc<Pager>) -> Self {
+    pub fn new(
+        program: vdbe::Program,
+        mv_store: Option<Arc<MvStore>>,
+        pager: Rc<Pager>,
+        query_mode: QueryMode,
+    ) -> Self {
         let accesses_db = program.accesses_db;
         let state = vdbe::ProgramState::new(program.max_registers, program.cursor_ref.len());
         Self {
@@ -2100,6 +2104,7 @@ impl Statement {
             mv_store,
             pager,
             accesses_db,
+            query_mode,
         }
     }
 
