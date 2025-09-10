@@ -3378,13 +3378,15 @@ impl BTreeCursor {
                             "left pointer is the same as parent page id"
                         );
                         #[cfg(debug_assertions)]
-                        pages_pointed_to.insert(left_pointer);
-                        tracing::debug!(
-                            "balance_non_root(insert_divider_cell, first_divider_cell={}, divider_cell={}, left_pointer={})",
-                            balance_info.first_divider_cell,
-                            sibling_page_idx,
-                            left_pointer
-                        );
+                        {
+                            pages_pointed_to.insert(left_pointer);
+                            tracing::debug!(
+                                "balance_non_root(insert_divider_cell, first_divider_cell={}, divider_cell={}, left_pointer={})",
+                                balance_info.first_divider_cell,
+                                sibling_page_idx,
+                                left_pointer
+                            );
+                        }
                         turso_assert!(
                             left_pointer == page.get().id as u32,
                             "left pointer is not the same as page id"
@@ -4379,7 +4381,7 @@ impl BTreeCursor {
         }
     }
 
-    #[instrument(skip(self), level = Level::DEBUG)]
+    #[instrument(skip(self, key), level = Level::DEBUG)]
     pub fn seek(&mut self, key: SeekKey<'_>, op: SeekOp) -> Result<IOResult<SeekResult>> {
         if let Some(mv_cursor) = &self.mv_cursor {
             let mut mv_cursor = mv_cursor.borrow_mut();
@@ -4480,7 +4482,7 @@ impl BTreeCursor {
         Ok(IOResult::Done(Some(record_ref)))
     }
 
-    #[instrument(skip(self), level = Level::DEBUG)]
+    #[instrument(skip_all, level = Level::DEBUG)]
     pub fn insert(&mut self, key: &BTreeKey) -> Result<IOResult<()>> {
         tracing::debug!(valid_state = ?self.valid_state, cursor_state = ?self.state, is_write_in_progress = self.is_write_in_progress());
         match &self.mv_cursor {
@@ -6177,10 +6179,13 @@ impl PageStack {
     #[instrument(skip(self), level = Level::DEBUG, name = "pagestack::retreat")]
     fn retreat(&mut self) {
         let current = self.current();
-        tracing::trace!(
-            curr_cell_index = self.node_states[current].cell_idx,
-            node_states = ?self.node_states.iter().map(|state| state.cell_idx).collect::<Vec<_>>(),
-        );
+        #[cfg(debug_assertions)]
+        {
+            tracing::trace!(
+                curr_cell_index = self.node_states[current].cell_idx,
+                node_states = ?self.node_states.iter().map(|state| state.cell_idx).collect::<Vec<_>>(),
+            );
+        }
         self.node_states[current].cell_idx -= 1;
     }
 

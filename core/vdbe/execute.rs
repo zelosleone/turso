@@ -5707,6 +5707,7 @@ pub fn op_idx_delete(
     );
 
     loop {
+        #[cfg(debug_assertions)]
         tracing::debug!(
             "op_idx_delete(cursor_id={}, start_reg={}, num_regs={}, rootpage={}, state={:?})",
             cursor_id,
