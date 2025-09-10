@@ -1984,7 +1984,7 @@ impl Pager {
                     // Freelist is not empty, so we can reuse the trunk itself as a new page
                     // and update the database's first freelist trunk page to the next trunk page.
                     header.freelist_trunk_page = next_trunk_page_id.into();
-                    header.freelist_pages = (header.freelist_pages.get() + 1).into();
+                    header.freelist_pages = (header.freelist_pages.get() - 1).into();
                     self.add_dirty(trunk_page);
                     // zero out the page
                     turso_assert!(
