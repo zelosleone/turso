@@ -7349,6 +7349,9 @@ pub fn op_integrity_check(
             let mut current_root_idx = 0;
             // check freelist pages first, if there are any for database
             if freelist_trunk_page > 0 {
+                let expected_freelist_count =
+                    return_if_io!(pager.with_header(|header| header.freelist_pages.get()));
+                integrity_check_state.set_expected_freelist_count(expected_freelist_count as usize);
                 integrity_check_state.start(
                     freelist_trunk_page as usize,
                     PageCategory::FreeListTrunk,
@@ -7375,6 +7378,14 @@ pub fn op_integrity_check(
                 *current_root_idx += 1;
                 return Ok(InsnFunctionStepResult::Step);
             } else {
+                if integrity_check_state.freelist_count.actual_count
+                    != integrity_check_state.freelist_count.expected_count
+                {
+                    errors.push(IntegrityCheckError::FreelistCountMismatch {
+                        actual_count: integrity_check_state.freelist_count.actual_count,
+                        expected_count: integrity_check_state.freelist_count.expected_count,
+                    });
+                }
                 let message = if errors.is_empty() {
                     "ok".to_string()
                 } else {

@@ -5487,6 +5487,13 @@ pub enum IntegrityCheckError {
         references: Vec<u64>,
         page_category: PageCategory,
     },
+    #[error(
+        "Freelist count mismatch. actual_count={actual_count}, expected_count={expected_count}"
+    )]
+    FreelistCountMismatch {
+        actual_count: usize,
+        expected_count: usize,
+    },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -5495,6 +5502,12 @@ pub(crate) enum PageCategory {
     Overflow,
     FreeListTrunk,
     FreePage,
+}
+
+#[derive(Clone)]
+pub struct CheckFreelist {
+    pub expected_count: usize,
+    pub actual_count: usize,
 }
 
 #[derive(Clone)]
@@ -5509,6 +5522,7 @@ pub struct IntegrityCheckState {
     first_leaf_level: Option<usize>,
     page_reference: HashMap<u64, u64>,
     page: Option<PageRef>,
+    pub freelist_count: CheckFreelist,
 }
 
 impl IntegrityCheckState {
@@ -5518,7 +5532,15 @@ impl IntegrityCheckState {
             page_reference: HashMap::new(),
             first_leaf_level: None,
             page: None,
+            freelist_count: CheckFreelist {
+                expected_count: 0,
+                actual_count: 0,
+            },
         }
+    }
+
+    pub fn set_expected_freelist_count(&mut self, count: usize) {
+        self.freelist_count.expected_count = count;
     }
 
     pub fn start(
@@ -5554,10 +5576,7 @@ impl IntegrityCheckState {
     ) {
         let page_id = entry.page_idx as u64;
         let Some(previous) = self.page_reference.insert(page_id, referenced_by) else {
-            // do not traverse free pages as they have no meaingful structured content
-            if entry.page_category != PageCategory::FreePage {
-                self.page_stack.push(entry);
-            }
+            self.page_stack.push(entry);
             return;
         };
         errors.push(IntegrityCheckError::PageReferencedMultipleTimes {
@@ -5616,6 +5635,7 @@ pub fn integrity_check(
 
         let contents = page.get_contents();
         if page_category == PageCategory::FreeListTrunk {
+            state.freelist_count.actual_count += 1;
             let next_freelist_trunk_page = contents.read_u32_no_offset(0);
             if next_freelist_trunk_page != 0 {
                 state.push_page(
@@ -5643,6 +5663,10 @@ pub fn integrity_check(
                     errors,
                 );
             }
+            continue;
+        }
+        if page_category == PageCategory::FreePage {
+            state.freelist_count.actual_count += 1;
             continue;
         }
         if page_category == PageCategory::Overflow {
