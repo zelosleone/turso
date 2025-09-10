@@ -64,12 +64,7 @@ fn main() -> anyhow::Result<()> {
 
     loop {
         match app.readline() {
-            Ok(_) => match app.consume(false) {
-                Ok(_) => {}
-                Err(e) => {
-                    eprintln!("{e}");
-                }
-            },
+            Ok(_) => app.consume(false),
             Err(ReadlineError::Interrupted) => {
                 // At prompt, increment interrupt count
                 if app.interrupt_count.fetch_add(1, Ordering::SeqCst) >= 1 {
@@ -83,13 +78,7 @@ fn main() -> anyhow::Result<()> {
             }
             Err(ReadlineError::Eof) => {
                 // consume remaining input before exit
-                match app.consume(true) {
-                    Ok(_) => {}
-                    Err(e) => {
-                        eprintln!("{e}");
-                    }
-                };
-
+                app.consume(true);
                 let _ = app.close_conn();
                 break;
             }
