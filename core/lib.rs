@@ -626,6 +626,38 @@ impl Database {
         Ok(pager)
     }
 
+    #[cfg(feature = "fs")]
+    pub fn io_for_path(path: &str) -> Result<Arc<dyn IO>> {
+        use crate::util::MEMORY_PATH;
+        let io: Arc<dyn IO> = match path.trim() {
+            MEMORY_PATH => Arc::new(MemoryIO::new()),
+            _ => Arc::new(PlatformIO::new()?),
+        };
+        Ok(io)
+    }
+
+    #[cfg(feature = "fs")]
+    pub fn io_for_vfs<S: AsRef<str> + std::fmt::Display>(vfs: S) -> Result<Arc<dyn IO>> {
+        let vfsmods = ext::add_builtin_vfs_extensions(None)?;
+        let io: Arc<dyn IO> = match vfsmods
+            .iter()
+            .find(|v| v.0 == vfs.as_ref())
+            .map(|v| v.1.clone())
+        {
+            Some(vfs) => vfs,
+            None => match vfs.as_ref() {
+                "memory" => Arc::new(MemoryIO::new()),
+                "syscall" => Arc::new(SyscallIO::new()?),
+                #[cfg(all(target_os = "linux", feature = "io_uring"))]
+                "io_uring" => Arc::new(UringIO::new()?),
+                other => {
+                    return Err(LimboError::InvalidArgument(format!("no such VFS: {other}")));
+                }
+            },
+        };
+        Ok(io)
+    }
+
     /// Open a new database file with optionally specifying a VFS without an existing database
     /// connection and symbol table to register extensions.
     #[cfg(feature = "fs")]
@@ -639,40 +671,13 @@ impl Database {
     where
         S: AsRef<str> + std::fmt::Display,
     {
-        use crate::util::MEMORY_PATH;
-        let vfsmods = ext::add_builtin_vfs_extensions(None)?;
-        match vfs {
-            Some(vfs) => {
-                let io: Arc<dyn IO> = match vfsmods
-                    .iter()
-                    .find(|v| v.0 == vfs.as_ref())
-                    .map(|v| v.1.clone())
-                {
-                    Some(vfs) => vfs,
-                    None => match vfs.as_ref() {
-                        "memory" => Arc::new(MemoryIO::new()),
-                        "syscall" => Arc::new(SyscallIO::new()?),
-                        #[cfg(all(target_os = "linux", feature = "io_uring"))]
-                        "io_uring" => Arc::new(UringIO::new()?),
-                        other => {
-                            return Err(LimboError::InvalidArgument(format!(
-                                "no such VFS: {other}"
-                            )));
-                        }
-                    },
-                };
-                let db = Self::open_file_with_flags(io.clone(), path, flags, opts)?;
-                Ok((io, db))
-            }
-            None => {
-                let io: Arc<dyn IO> = match path.trim() {
-                    MEMORY_PATH => Arc::new(MemoryIO::new()),
-                    _ => Arc::new(PlatformIO::new()?),
-                };
-                let db = Self::open_file_with_flags(io.clone(), path, flags, opts)?;
-                Ok((io, db))
-            }
-        }
+        let io = vfs
+            .map(|vfs| Self::io_for_vfs(vfs))
+            .or_else(|| Some(Self::io_for_path(path)))
+            .transpose()?
+            .unwrap();
+        let db = Self::open_file_with_flags(io.clone(), path, flags, opts)?;
+        Ok((io, db))
     }
 
     #[inline]
@@ -1304,12 +1309,17 @@ impl Connection {
     }
 
     #[cfg(feature = "fs")]
-    fn from_uri_attached(uri: &str, db_opts: DatabaseOpts) -> Result<Arc<Database>> {
+    fn from_uri_attached(
+        uri: &str,
+        db_opts: DatabaseOpts,
+        io: Arc<dyn IO>,
+    ) -> Result<Arc<Database>> {
         let mut opts = OpenOptions::parse(uri)?;
         // FIXME: for now, only support read only attach
         opts.mode = OpenMode::ReadOnly;
         let flags = opts.get_flags()?;
-        let (_io, db) = Database::open_new(&opts.path, opts.vfs.as_ref(), flags, db_opts)?;
+        let io = opts.vfs.map(Database::io_for_vfs).unwrap_or(Ok(io))?;
+        let db = Database::open_file_with_flags(io.clone(), &opts.path, flags, db_opts)?;
         if let Some(modeof) = opts.modeof {
             let perms = std::fs::metadata(modeof)?;
             std::fs::set_permissions(&opts.path, perms.permissions())?;
@@ -1852,7 +1862,7 @@ impl Connection {
             .with_indexes(use_indexes)
             .with_views(use_views)
             .with_strict(use_strict);
-        let db = Self::from_uri_attached(path, db_opts)?;
+        let db = Self::from_uri_attached(path, db_opts, self._db.io.clone())?;
         let pager = Rc::new(db.init_pager(None)?);
 
         self.attached_databases

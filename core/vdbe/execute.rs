@@ -1455,13 +1455,16 @@ pub fn op_column(
                 index_cursor_id,
                 table_cursor_id,
             } => {
-                let rowid = {
+                let Some(rowid) = ({
                     let index_cursor = state.get_cursor(index_cursor_id);
                     let index_cursor = index_cursor.as_btree_mut();
                     return_if_io!(index_cursor.rowid())
+                }) else {
+                    state.registers[*dest] = Register::Value(Value::Null);
+                    break 'outer;
                 };
                 state.op_column_state = OpColumnState::Seek {
-                    rowid: rowid.unwrap(),
+                    rowid,
                     table_cursor_id,
                 };
             }
@@ -6991,16 +6994,34 @@ pub fn op_open_ephemeral(
             let conn = program.connection.clone();
             let io = conn.pager.borrow().io.clone();
             let rand_num = io.generate_random_number();
-            let temp_dir = temp_dir();
-            let rand_path =
-                std::path::Path::new(&temp_dir).join(format!("tursodb-ephemeral-{rand_num}"));
-            let Some(rand_path_str) = rand_path.to_str() else {
-                return Err(LimboError::InternalError(
-                    "Failed to convert path to string".to_string(),
-                ));
-            };
-            let file = io.open_file(rand_path_str, OpenFlags::Create, false)?;
-            let db_file = Arc::new(DatabaseFile::new(file));
+            let db_file;
+            let db_file_io: Arc<dyn crate::IO>;
+
+            // we support OPFS in WASM - but it require files to be pre-opened in the browser before use
+            // we can fix this if we will make open_file interface async
+            // but for now for simplicity we use MemoryIO for all intermediate calculations
+            #[cfg(target_family = "wasm")]
+            {
+                use crate::MemoryIO;
+
+                db_file_io = Arc::new(MemoryIO::new());
+                let file = db_file_io.open_file("temp-file", OpenFlags::Create, false)?;
+                db_file = Arc::new(DatabaseFile::new(file));
+            }
+            #[cfg(not(target_family = "wasm"))]
+            {
+                let temp_dir = temp_dir();
+                let rand_path =
+                    std::path::Path::new(&temp_dir).join(format!("tursodb-ephemeral-{rand_num}"));
+                let Some(rand_path_str) = rand_path.to_str() else {
+                    return Err(LimboError::InternalError(
+                        "Failed to convert path to string".to_string(),
+                    ));
+                };
+                let file = io.open_file(rand_path_str, OpenFlags::Create, false)?;
+                db_file = Arc::new(DatabaseFile::new(file));
+                db_file_io = io;
+            }
 
             let page_size = pager
                 .io
@@ -7013,7 +7034,7 @@ pub fn op_open_ephemeral(
             let pager = Rc::new(Pager::new(
                 db_file,
                 None,
-                io,
+                db_file_io,
                 page_cache,
                 buffer_pool.clone(),
                 Arc::new(AtomicDbState::new(DbState::Uninitialized)),
