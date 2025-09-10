@@ -387,7 +387,29 @@ impl ProgramState {
         self.parameters.clear();
         self.current_collation = None;
         #[cfg(feature = "json")]
-        self.json_cache.clear()
+        self.json_cache.clear();
+
+        // Reset state machines
+        self.op_delete_state = OpDeleteState {
+            sub_state: OpDeleteSubState::MaybeCaptureRecord,
+            deleted_record: None,
+        };
+        self.op_idx_delete_state = None;
+        self.op_integrity_check_state = OpIntegrityCheckState::Start;
+        self.metrics = StatementMetrics::new();
+        self.op_open_ephemeral_state = OpOpenEphemeralState::Start;
+        self.op_new_rowid_state = OpNewRowidState::Start;
+        self.op_idx_insert_state = OpIdxInsertState::MaybeSeek;
+        self.op_insert_state = OpInsertState {
+            sub_state: OpInsertSubState::MaybeCaptureRecord,
+            old_record: None,
+        };
+        self.op_no_conflict_state = OpNoConflictState::Start;
+        self.seek_state = OpSeekState::Start;
+        self.current_collation = None;
+        self.op_column_state = OpColumnState::Start;
+        self.op_row_id_state = OpRowIdState::Start;
+        self.view_delta_state = ViewDeltaCommitState::NotStarted;
     }
 
     pub fn get_cursor(&mut self, cursor_id: CursorID) -> &mut Cursor {
