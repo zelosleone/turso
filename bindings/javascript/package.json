@@ -9,9 +9,9 @@
     "packages/native",
     "packages/browser",
     "packages/browser-common",
-    "packages/sync/common",
-    "packages/sync/native",
-    "packages/sync/browser"
+    "sync/packages/common",
+    "sync/packages/native",
+    "sync/packages/browser"
   ],
   "version": "0.1.5"
 }

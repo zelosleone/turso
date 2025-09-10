@@ -11,6 +11,8 @@ export declare class Database {
   constructor(path: string, opts?: DatabaseOpts | undefined | null)
   /** Returns whether the database is in memory-only mode. */
   get memory(): boolean
+  /** Returns whether the database is in memory-only mode. */
+  get path(): string
   /** Returns whether the database connection is open. */
   get open(): boolean
   /**
@@ -32,7 +34,7 @@ export declare class Database {
    *
    * # Returns
    */
-  batchAsync(sql: string): Promise<unknown>
+  batchAsync(sql: string): Promise<void>
   /**
    * Prepares a statement for execution.
    *
@@ -91,14 +93,6 @@ export declare class Database {
   ioLoopAsync(): Promise<void>
 }
 
-export declare class Opfs {
-  constructor()
-}
-
-export declare class OpfsFile {
-
-}
-
 /** A prepared statement. */
 export declare class Statement {
   reset(): void
@@ -131,7 +125,7 @@ export declare class Statement {
    * Step the statement and return result code (executed on the background thread):
    * 1 = Row available, 2 = Done, 3 = I/O needed
    */
-  stepAsync(): Promise<unknown>
+  stepAsync(): Promise<number>
   /** Get the current row data according to the presentation mode */
   row(): unknown
   /** Sets the presentation mode to raw. */
@@ -147,19 +141,11 @@ export declare class Statement {
    */
   safeIntegers(toggle?: boolean | undefined | null): void
   /** Get column information for the statement */
-  columns(): unknown[]
+  columns(): Promise<any>
   /** Finalizes the statement. */
   finalize(): void
 }
 
-export declare function connect(path: string, opts?: DatabaseOpts | undefined | null): Promise<unknown>
-
 export interface DatabaseOpts {
   tracing?: string
 }
-
-/**
- * turso-db in the the browser requires explicit thread pool initialization
- * so, we just put no-op task on the thread pool and force emnapi to allocate web worker
- */
-export declare function initThreadPool(): Promise<unknown>
