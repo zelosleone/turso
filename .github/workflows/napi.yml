@@ -149,10 +149,10 @@ jobs:
         with:
           name: ${{ matrix.settings.artifact }}
           path: |
-            bindings/javascript/packages/native/${{ env.APP_NAME }}.*.node
-            bindings/javascript/packages/browser/${{ env.APP_NAME }}.*.wasm
-            bindings/javascript/sync/packages/native/${{ env.APP_NAME }}.*.node
-            bindings/javascript/sync/packages/browser/${{ env.APP_NAME }}.*.wasm
+            bindings/javascript/packages/native/turso.*.node
+            bindings/javascript/packages/browser/turso.*.wasm
+            bindings/javascript/sync/packages/native/sync.*.node
+            bindings/javascript/sync/packages/browser/sync.*.wasm
           if-no-files-found: error
   test-db-linux-x64-gnu-binding:
     name: Test DB bindings on Linux-x64-gnu - node@${{ matrix.node }}
