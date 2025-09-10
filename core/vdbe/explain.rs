@@ -653,14 +653,14 @@ pub fn insn_to_str(
                 0,
                 "".to_string(),
             ),
-            Insn::Transaction { db, write , schema_cookie} => (
+            Insn::Transaction { db, tx_mode, schema_cookie} => (
                 "Transaction",
                 *db as i32,
-                *write as i32,
+                *tx_mode as i32,
                 *schema_cookie as i32,
                 Value::build_text(""),
                 0,
-                format!("iDb={db} write={write}"),
+                format!("iDb={db} tx_mode={tx_mode:?}"),
             ),
             Insn::Goto { target_pc } => (
                 "Goto",

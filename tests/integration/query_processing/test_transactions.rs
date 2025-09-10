@@ -172,3 +172,75 @@ fn test_transaction_visibility() {
         }
     }
 }
+
+#[test]
+fn test_mvcc_transactions_autocommit() {
+    let tmp_db = TempDatabase::new_with_opts(
+        "test_mvcc_transactions_autocommit.db",
+        turso_core::DatabaseOpts::new().with_mvcc(true),
+    );
+    let conn1 = tmp_db.connect_limbo();
+
+    // This should work - basic CREATE TABLE in MVCC autocommit mode
+    conn1
+        .execute("CREATE TABLE test (id INTEGER PRIMARY KEY, value TEXT)")
+        .unwrap();
+}
+
+#[test]
+fn test_mvcc_transactions_immediate() {
+    let tmp_db = TempDatabase::new_with_opts(
+        "test_mvcc_transactions_immediate.db",
+        turso_core::DatabaseOpts::new().with_mvcc(true),
+    );
+    let conn1 = tmp_db.connect_limbo();
+    let conn2 = tmp_db.connect_limbo();
+
+    conn1
+        .execute("CREATE TABLE test (id INTEGER PRIMARY KEY, value TEXT)")
+        .unwrap();
+
+    // Start an immediate transaction
+    conn1.execute("BEGIN IMMEDIATE").unwrap();
+
+    // Another immediate transaction fails with BUSY
+    let result = conn2.execute("BEGIN IMMEDIATE");
+    assert!(matches!(result, Err(LimboError::Busy)));
+}
+
+#[test]
+fn test_mvcc_transactions_deferred() {
+    let tmp_db = TempDatabase::new_with_opts(
+        "test_mvcc_transactions_deferred.db",
+        turso_core::DatabaseOpts::new().with_mvcc(true),
+    );
+    let conn1 = tmp_db.connect_limbo();
+    let conn2 = tmp_db.connect_limbo();
+
+    conn1
+        .execute("CREATE TABLE test (id INTEGER PRIMARY KEY, value TEXT)")
+        .unwrap();
+
+    conn1.execute("BEGIN DEFERRED").unwrap();
+    conn2.execute("BEGIN DEFERRED").unwrap();
+
+    conn1
+        .execute("INSERT INTO test (id, value) VALUES (1, 'first')")
+        .unwrap();
+
+    let result = conn2.execute("INSERT INTO test (id, value) VALUES (2, 'second')");
+    assert!(matches!(result, Err(LimboError::Busy)));
+
+    conn1.execute("COMMIT").unwrap();
+
+    conn2
+        .execute("INSERT INTO test (id, value) VALUES (2, 'second')")
+        .unwrap();
+    conn2.execute("COMMIT").unwrap();
+
+    let mut stmt = conn1.query("SELECT COUNT(*) FROM test").unwrap().unwrap();
+    if let StepResult::Row = stmt.step().unwrap() {
+        let row = stmt.row().unwrap();
+        assert_eq!(*row.get::<&Value>(0).unwrap(), Value::Integer(2));
+    }
+}

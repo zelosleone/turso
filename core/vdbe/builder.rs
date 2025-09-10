@@ -774,6 +774,10 @@ impl ProgramBuilder {
         }
     }
 
+    pub fn begin_concurrent_operation(&mut self) {
+        self.txn_mode = TransactionMode::Concurrent;
+    }
+
     /// Indicates the rollback behvaiour for the halt instruction in epilogue
     pub fn rollback(&mut self) {
         self.rollback = true;
@@ -791,7 +795,7 @@ impl ProgramBuilder {
             if !matches!(self.txn_mode, TransactionMode::None) {
                 self.emit_insn(Insn::Transaction {
                     db: 0,
-                    write: matches!(self.txn_mode, TransactionMode::Write),
+                    tx_mode: self.txn_mode,
                     schema_cookie: schema.schema_version,
                 });
             }

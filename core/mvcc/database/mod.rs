@@ -1,5 +1,7 @@
 use crate::mvcc::clock::LogicalClock;
 use crate::mvcc::persistent_storage::Storage;
+use crate::result::LimboResult;
+use crate::return_if_io;
 use crate::state_machine::StateMachine;
 use crate::state_machine::StateTransition;
 use crate::state_machine::TransitionResult;
@@ -448,12 +450,14 @@ impl<Clock: LogicalClock> StateTransition for CommitStateMachine<Clock> {
                 // 1. Wait for currently writer to finish before second txn starts.
                 // 2. Choose a txn to write depending on some heuristics like amount of frames will be written.
                 // 3. ..
-                //
-                let result = self.pager.io.block(|| self.pager.begin_write_tx())?;
-                if let crate::result::LimboResult::Busy = result {
-                    return Err(LimboError::InternalError(
-                        "Pager write transaction busy".to_string(),
-                    ));
+
+                // If this is the exclusive transaction, we already acquired a write transaction
+                // on the pager in begin_exclusive_tx() and don't need to acquire it.
+                if !mvcc_store.is_exclusive_tx(&self.tx_id) {
+                    let result = self.pager.io.block(|| self.pager.begin_write_tx())?;
+                    if let LimboResult::Busy = result {
+                        return Err(LimboError::Busy);
+                    }
                 }
                 self.state = CommitState::WriteRow {
                     end_ts,
@@ -613,6 +617,11 @@ impl<Clock: LogicalClock> StateTransition for CommitStateMachine<Clock> {
                 // FIXME: it actually just become a problem for today!!!
                 // TODO: test that reproduces this failure, and then a fix
                 mvcc_store.txs.remove(&self.tx_id);
+
+                if mvcc_store.is_exclusive_tx(&self.tx_id) {
+                    mvcc_store.release_exclusive_tx(&self.tx_id);
+                }
+
                 if !log_record.row_versions.is_empty() {
                     mvcc_store.storage.log_tx(log_record)?;
                 }
@@ -816,6 +825,13 @@ pub struct MvStore<Clock: LogicalClock> {
     clock: Clock,
     storage: Storage,
     loaded_tables: RwLock<HashSet<u64>>,
+
+    /// The transaction ID of a transaction that has acquired an exclusive write lock, if any.
+    ///
+    /// An exclusive MVCC transaction is one that has a write lock on the pager, which means
+    /// every other MVCC transaction must wait for it to commit before they can commit. We have
+    /// exclusive transactions to support single-writer semantics for compatibility with SQLite.
+    exclusive_tx: RwLock<Option<TxID>>,
 }
 
 impl<Clock: LogicalClock> MvStore<Clock> {
@@ -829,6 +845,7 @@ impl<Clock: LogicalClock> MvStore<Clock> {
             clock,
             storage,
             loaded_tables: RwLock::new(HashSet::new()),
+            exclusive_tx: RwLock::new(None),
         }
     }
 
@@ -1102,6 +1119,47 @@ impl<Clock: LogicalClock> MvStore<Clock> {
         }
     }
 
+    /// Begins an exclusive write transaction that prevents concurrent writes.
+    ///
+    /// This is used for IMMEDIATE and EXCLUSIVE transaction types where we need
+    /// to ensure exclusive write access as per SQLite semantics.
+    pub fn begin_exclusive_tx(&self, pager: Rc<Pager>) -> Result<IOResult<TxID>> {
+        let tx_id = self.get_tx_id();
+        let begin_ts = self.get_timestamp();
+
+        self.acquire_exclusive_tx(&tx_id)?;
+
+        // Try to acquire the pager read lock
+        match pager.begin_read_tx()? {
+            LimboResult::Busy => {
+                self.release_exclusive_tx(&tx_id);
+                return Err(LimboError::Busy);
+            }
+            LimboResult::Ok => {}
+        }
+        // Try to acquire the pager write lock
+        match return_if_io!(pager.begin_write_tx()) {
+            LimboResult::Busy => {
+                tracing::debug!("begin_exclusive_tx: tx_id={} failed with Busy", tx_id);
+                // Failed to get pager lock - release our exclusive lock
+                self.release_exclusive_tx(&tx_id);
+                pager.end_read_tx()?;
+                return Err(LimboError::Busy);
+            }
+            LimboResult::Ok => {
+                let tx = Transaction::new(tx_id, begin_ts);
+                tracing::trace!(
+                    "begin_exclusive_tx(tx_id={}) - exclusive write transaction",
+                    tx_id
+                );
+                tracing::debug!("begin_exclusive_tx: tx_id={} succeeded", tx_id);
+                self.txs.insert(tx_id, RwLock::new(tx));
+            }
+        }
+
+        Ok(IOResult::Done(tx_id))
+    }
+
     /// Begins a new transaction in the database.
     ///
     /// This function starts a new transaction in the database and returns a `TxID` value
@@ -1161,6 +1219,10 @@ impl<Clock: LogicalClock> MvStore<Clock> {
         let write_set: Vec<RowID> = tx.write_set.iter().map(|v| *v.value()).collect();
         drop(tx);
 
+        if self.is_exclusive_tx(&tx_id) {
+            self.release_exclusive_tx(&tx_id);
+        }
+
         for ref id in write_set {
             if let Some(row_versions) = self.rows.get(id) {
                 let mut row_versions = row_versions.value().write();
@@ -1178,6 +1240,30 @@ impl<Clock: LogicalClock> MvStore<Clock> {
         // FIXME: verify that we can already remove the transaction here!
         // Maybe it's fine for snapshot isolation, but too early for serializable?
         self.txs.remove(&tx_id);
+    }
+
+    /// Returns true if the given transaction is the exclusive transaction.
+    fn is_exclusive_tx(&self, tx_id: &TxID) -> bool {
+        self.exclusive_tx.read().as_ref() == Some(tx_id)
+    }
+
+    /// Acquires the exclusive transaction lock to the given transaction ID.
+    fn acquire_exclusive_tx(&self, tx_id: &TxID) -> Result<()> {
+        let mut exclusive_tx = self.exclusive_tx.write();
+        if exclusive_tx.is_some() {
+            // Another transaction already holds the exclusive lock
+            return Err(LimboError::Busy);
+        }
+        // Reserve the exclusive lock with our tx_id
+        *exclusive_tx = Some(*tx_id);
+        Ok(())
+    }
+
+    /// Release the exclusive transaction lock if held by the this transaction.
+    fn release_exclusive_tx(&self, tx_id: &TxID) {
+        let mut exclusive_tx = self.exclusive_tx.write();
+        assert_eq!(exclusive_tx.as_ref(), Some(tx_id));
+        *exclusive_tx = None;
     }
 
     /// Generates next unique transaction id
