@@ -1563,12 +1563,15 @@ impl Pager {
     /// of a rollback or in case we want to invalidate page cache after starting a read transaction
     /// right after new writes happened which would invalidate current page cache.
     pub fn clear_page_cache(&self) {
-        self.dirty_pages.borrow_mut().clear();
-        self.page_cache.write().unset_dirty_all_pages();
-        self.page_cache
-            .write()
-            .clear()
-            .expect("Failed to clear page cache");
+        let dirty_pages = self.dirty_pages.borrow();
+        let mut cache = self.page_cache.write();
+        for page_id in dirty_pages.iter() {
+            let page_key = PageCacheKey::new(*page_id);
+            if let Some(page) = cache.get(&page_key).unwrap_or(None) {
+                page.clear_dirty();
+            }
+        }
+        cache.clear().expect("Failed to clear page cache");
     }
 
     /// Checkpoint in Truncate mode and delete the WAL file. This method is _only_ to be called
@@ -2118,6 +2121,7 @@ impl Pager {
         is_write: bool,
     ) -> Result<(), LimboError> {
         tracing::debug!(schema_did_change);
+        self.clear_page_cache();
         if is_write {
             self.dirty_pages.borrow_mut().clear();
         } else {
@@ -2126,12 +2130,7 @@ impl Pager {
                 "dirty pages should be empty for read txn"
             );
         }
-        let mut cache = self.page_cache.write();
-
         self.reset_internal_states();
-
-        cache.unset_dirty_all_pages();
-        cache.clear().expect("failed to clear page cache");
         if schema_did_change {
             connection.schema.replace(connection._db.clone_schema()?);
         }
