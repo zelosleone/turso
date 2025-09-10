@@ -227,7 +227,7 @@ export class Connection {
   async reconnect(): Promise<void> {
     try {
       if (this.isOpen) {
-        this.close();
+        await this.close();
       }
     } finally {
       this.session = new Session(this.config);
