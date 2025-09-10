@@ -177,7 +177,7 @@ jobs:
       - name: Download all DB artifacts
         uses: actions/download-artifact@v4
         with:
-          path: bindings/javascript/packages
+          path: bindings/javascript
           merge-multiple: true
           pattern: 'db*'
       - name: List packages
@@ -203,12 +203,14 @@ jobs:
           node-version: ${{ matrix.node }}
       - name: Install dependencies
         run: yarn install
-      - name: Build common
+      - name: Build db common
         run: yarn workspace @tursodatabase/database-common build
+      - name: Build sync common
+        run: yarn workspace @tursodatabase/sync-common build
       - name: Download all sync artifacts
         uses: actions/download-artifact@v4
         with:
-          path: bindings/javascript/sync/packages
+          path: bindings/javascript
           merge-multiple: true
           pattern: 'sync*'
       - name: List packages
@@ -234,13 +236,13 @@ jobs:
       - name: Download all DB artifacts
         uses: actions/download-artifact@v4
         with:
-          path: bindings/javascript/packages
+          path: bindings/javascript
           merge-multiple: true
           pattern: 'db*'
       - name: Download all sync artifacts
         uses: actions/download-artifact@v4
         with:
-          path: bindings/javascript/sync/packages
+          path: bindings/javascript
           merge-multiple: true
           pattern: 'sync*'
       - name: Install dependencies
