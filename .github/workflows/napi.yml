@@ -193,7 +193,6 @@ jobs:
       id-token: write
     needs:
       - test-db-linux-x64-gnu-binding
-      - test-sync-linux-x64-gnu-binding
     steps:
       - uses: actions/checkout@v4
       - name: Setup node
