@@ -8217,27 +8217,19 @@ impl Value {
         }
     }
 
-    fn to_f64(&self) -> Option<f64> {
-        match self {
-            Value::Integer(i) => Some(*i as f64),
-            Value::Float(f) => Some(*f),
-            Value::Text(t) => t.as_str().parse::<f64>().ok(),
-            _ => None,
-        }
-    }
-
     fn exec_math_unary(&self, function: &MathFunc) -> Value {
+        let v = Numeric::from_value_strict(self);
+
         // In case of some functions and integer input, return the input as is
-        if let Value::Integer(_) = self {
+        if let Numeric::Integer(i) = v {
             if matches! { function, MathFunc::Ceil | MathFunc::Ceiling | MathFunc::Floor | MathFunc::Trunc }
             {
-                return self.clone();
+                return Value::Integer(i);
             }
         }
 
-        let f = match self.to_f64() {
-            Some(f) => f,
-            None => return Value::Null,
+        let Some(f) = v.try_into_f64() else {
+            return Value::Null;
         };
 
         let result = match function {
@@ -8274,14 +8266,12 @@ impl Value {
     }
 
     fn exec_math_binary(&self, rhs: &Value, function: &MathFunc) -> Value {
-        let lhs = match self.to_f64() {
-            Some(f) => f,
-            None => return Value::Null,
+        let Some(lhs) = Numeric::from_value_strict(self).try_into_f64() else {
+            return Value::Null;
         };
 
-        let rhs = match rhs.to_f64() {
-            Some(f) => f,
-            None => return Value::Null,
+        let Some(rhs) = Numeric::from_value_strict(rhs).try_into_f64() else {
+            return Value::Null;
         };
 
         let result = match function {
@@ -8299,16 +8289,13 @@ impl Value {
     }
 
     fn exec_math_log(&self, base: Option<&Value>) -> Value {
-        let f = match self.to_f64() {
-            Some(f) => f,
-            None => return Value::Null,
+        let Some(f) = Numeric::from_value_strict(self).try_into_f64() else {
+            return Value::Null;
         };
 
-        let base = match base {
-            Some(base) => match base.to_f64() {
-                Some(f) => f,
-                None => return Value::Null,
-            },
+        let base = match base.map(|value| Numeric::from_value_strict(value).try_into_f64()) {
+            Some(Some(f)) => f,
+            Some(None) => return Value::Null,
             None => 10.0,
         };
 
@@ -8389,11 +8376,9 @@ impl Value {
 
     pub fn exec_concat(&self, rhs: &Value) -> Value {
         if let (Value::Blob(lhs), Value::Blob(rhs)) = (self, rhs) {
-            return Value::build_text(String::from_utf8_lossy(dbg!(&[
-                lhs.as_slice(),
-                rhs.as_slice()
-            ]
-            .concat())));
+            return Value::build_text(String::from_utf8_lossy(
+                &[lhs.as_slice(), rhs.as_slice()].concat(),
+            ));
         }
 
         let Some(lhs) = self.cast_text() else {

@@ -1,5 +1,6 @@
 #![allow(unused)]
 use crate::incremental::view::IncrementalView;
+use crate::numeric::StrToF64;
 use crate::translate::expr::WalkControl;
 use crate::types::IOResult;
 use crate::{
@@ -1185,8 +1186,12 @@ pub fn parse_numeric_literal(text: &str) -> Result<Value> {
         return Ok(Value::Integer(int_value));
     }
 
-    let float_value = text.parse::<f64>()?;
-    Ok(Value::Float(float_value))
+    let Some(StrToF64::Fractional(float) | StrToF64::Decimal(float)) =
+        crate::numeric::str_to_f64(text)
+    else {
+        unreachable!();
+    };
+    Ok(Value::Float(float.into()))
 }
 
 pub fn parse_signed_number(expr: &Expr) -> Result<Value> {
