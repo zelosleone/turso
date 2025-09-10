@@ -19,6 +19,7 @@ use comfy_table::{Attribute, Cell, CellAlignment, ContentArrangement, Row, Table
 use rustyline::{error::ReadlineError, history::DefaultHistory, Editor};
 use std::{
     io::{self, BufRead as _, IsTerminal, Write},
+    mem::{forget, ManuallyDrop},
     path::PathBuf,
     sync::{
         atomic::{AtomicUsize, Ordering},
@@ -82,7 +83,7 @@ pub struct Limbo {
     writer: Option<Box<dyn Write>>,
     conn: Arc<turso_core::Connection>,
     pub interrupt_count: Arc<AtomicUsize>,
-    input_buff: String,
+    input_buff: ManuallyDrop<String>,
     opts: Settings,
     pub rl: Option<Editor<LimboHelper, DefaultHistory>>,
     config: Option<Config>,
@@ -149,7 +150,7 @@ macro_rules! row_step_result_query {
 
 impl Limbo {
     pub fn new() -> anyhow::Result<(Self, WorkerGuard)> {
-        let opts = Opts::parse();
+        let mut opts = Opts::parse();
         let guard = Self::init_tracing(&opts)?;
 
         let db_file = opts
@@ -202,7 +203,8 @@ impl Limbo {
             })
             .expect("Error setting Ctrl-C handler");
         }
-        let sql = opts.sql.clone();
+        let sql = opts.sql.take();
+        let has_sql = sql.is_some();
         let quiet = opts.quiet;
         let config = Config::for_output_mode(opts.output_mode);
         let mut app = Self {
@@ -211,12 +213,12 @@ impl Limbo {
             writer: Some(get_writer(&opts.output)),
             conn,
             interrupt_count,
-            input_buff: String::new(),
+            input_buff: ManuallyDrop::new(sql.unwrap_or_default()),
             opts: Settings::from(opts),
             rl: None,
             config: Some(config),
         };
-        app.first_run(sql, quiet)?;
+        app.first_run(has_sql, quiet)?;
         Ok((app, guard))
     }
 
@@ -235,14 +237,14 @@ impl Limbo {
         self
     }
 
-    fn first_run(&mut self, sql: Option<String>, quiet: bool) -> Result<(), LimboError> {
+    fn first_run(&mut self, has_sql: bool, quiet: bool) -> Result<(), LimboError> {
         // Skip startup messages and SQL execution in MCP mode
         if self.is_mcp_mode() {
             return Ok(());
         }
 
-        if let Some(sql) = sql {
-            self.handle_first_input(&sql)?;
+        if has_sql {
+            self.handle_first_input()?;
         }
         if !quiet {
             self.writeln_fmt(format_args!("Turso v{}", env!("CARGO_PKG_VERSION")))?;
@@ -255,12 +257,8 @@ impl Limbo {
         Ok(())
     }
 
-    fn handle_first_input(&mut self, cmd: &str) -> Result<(), LimboError> {
-        if cmd.trim().starts_with('.') {
-            self.handle_dot_command(&cmd[1..]);
-        } else {
-            self.run_query(cmd);
-        }
+    fn handle_first_input(&mut self) -> Result<(), LimboError> {
+        self.consume(true);
         self.close_conn()?;
         std::process::exit(0);
     }
@@ -439,12 +437,6 @@ impl Limbo {
             .unwrap()
             .write_all(self.opts.null_value.as_bytes())
     }
-
-    fn buffer_input(&mut self, line: &str) {
-        self.input_buff.push_str(line);
-        self.input_buff.push(' ');
-    }
-
     fn run_query(&mut self, input: &str) {
         let echo = self.opts.echo;
         if echo {
@@ -506,8 +498,6 @@ impl Limbo {
                 let _ = self.writeln(output);
             }
         }
-
-        self.reset_input();
     }
 
     fn print_query_performance_stats(&mut self, start: Instant, stats: Option<&QueryStatistics>) {
@@ -553,35 +543,74 @@ impl Limbo {
         }
     }
 
-    fn reset_line(&mut self, _line: &str) -> rustyline::Result<()> {
+    fn reset_line(&mut self) {
         // Entry is auto added to history
         // self.rl.add_history_entry(line.to_owned())?;
         self.interrupt_count.store(0, Ordering::Release);
-        Ok(())
     }
 
-    pub fn handle_input_line(&mut self, line: &str) -> anyhow::Result<()> {
-        if self.input_buff.is_empty() {
-            if line.is_empty() {
-                return Ok(());
-            }
-            if let Some(command) = line.strip_prefix('.') {
-                self.handle_dot_command(command);
-                let _ = self.reset_line(line);
-                return Ok(());
-            }
+    // consume will consume `input_buff`
+    pub fn consume(&mut self, flush: bool) {
+        if self.input_buff.trim().is_empty() {
+            return;
         }
 
-        self.reset_line(line)?;
-        if line.ends_with(';') {
-            self.buffer_input(line);
-            let buff = self.input_buff.clone();
-            self.run_query(buff.as_str());
-        } else {
-            self.buffer_input(format!("{line}\n").as_str());
-            self.set_multiline_prompt();
+        self.reset_line();
+
+        // we are taking ownership of input_buff here
+        // its always safe because we split the string in two parts
+        fn take_usable_part(app: &mut Limbo) -> (String, usize) {
+            let ptr = app.input_buff.as_mut_ptr();
+            let (len, cap) = (app.input_buff.len(), app.input_buff.capacity());
+            app.input_buff =
+                ManuallyDrop::new(unsafe { String::from_raw_parts(ptr.add(len), 0, cap - len) });
+            (unsafe { String::from_raw_parts(ptr, len, len) }, unsafe {
+                ptr.add(len).addr()
+            })
         }
-        Ok(())
+
+        fn concat_usable_part(app: &mut Limbo, mut part: String, old_address: usize) {
+            let ptr = app.input_buff.as_mut_ptr();
+            let (len, cap) = (app.input_buff.len(), app.input_buff.capacity());
+
+            // if the address is not the same, meaning the string has been reallocated
+            // so we just drop the part we took earlier
+            if ptr.addr() != old_address || !app.input_buff.is_empty() {
+                return;
+            }
+
+            let head_ptr = part.as_mut_ptr();
+            let (head_len, head_cap) = (part.len(), part.capacity());
+            forget(part); // move this part into `input_buff`
+            app.input_buff = ManuallyDrop::new(unsafe {
+                String::from_raw_parts(head_ptr, head_len + len, head_cap + cap)
+            });
+        }
+
+        let value = self.input_buff.trim();
+        match (value.starts_with('.'), value.ends_with(';')) {
+            (true, _) => {
+                let (owned_value, old_address) = take_usable_part(self);
+                self.handle_dot_command(owned_value.trim().strip_prefix('.').unwrap());
+                concat_usable_part(self, owned_value, old_address);
+                self.reset_input();
+            }
+            (false, true) => {
+                let (owned_value, old_address) = take_usable_part(self);
+                self.run_query(owned_value.trim());
+                concat_usable_part(self, owned_value, old_address);
+                self.reset_input();
+            }
+            (false, false) if flush => {
+                let (owned_value, old_address) = take_usable_part(self);
+                self.run_query(owned_value.trim());
+                concat_usable_part(self, owned_value, old_address);
+                self.reset_input();
+            }
+            (false, false) => {
+                self.set_multiline_prompt();
+            }
+        }
     }
 
     pub fn handle_dot_command(&mut self, line: &str) {
@@ -1256,35 +1285,23 @@ impl Limbo {
         Ok(())
     }
 
-    pub fn handle_remaining_input(&mut self) {
-        if self.input_buff.is_empty() {
-            return;
-        }
+    // readline will read inputs from rustyline or stdin
+    // and write it to input_buff.
+    pub fn readline(&mut self) -> Result<(), ReadlineError> {
+        use std::fmt::Write;
 
-        let buff = self.input_buff.clone();
-        self.run_query(buff.as_str());
-        self.reset_input();
-    }
-
-    pub fn readline(&mut self) -> Result<String, ReadlineError> {
         if let Some(rl) = &mut self.rl {
-            Ok(rl.readline(&self.prompt)?)
+            let result = rl.readline(&self.prompt)?;
+            let _ = self.input_buff.write_str(result.as_str());
         } else {
-            let mut input = String::new();
             let mut reader = std::io::stdin().lock();
-            if reader.read_line(&mut input)? == 0 {
+            if reader.read_line(&mut self.input_buff)? == 0 {
                 return Err(ReadlineError::Eof);
             }
-            // Remove trailing newline
-            if input.ends_with('\n') {
-                input.pop();
-                if input.ends_with('\r') {
-                    input.pop();
-                }
-            }
-
-            Ok(input)
         }
+
+        let _ = self.input_buff.write_char(' ');
+        Ok(())
     }
 
     pub fn dump_database_from_conn<W: Write, P: ProgressSink>(
@@ -1579,6 +1596,9 @@ fn sql_quote_string(s: &str) -> String {
 }
 impl Drop for Limbo {
     fn drop(&mut self) {
-        self.save_history()
+        self.save_history();
+        unsafe {
+            ManuallyDrop::drop(&mut self.input_buff);
+        }
     }
 }
