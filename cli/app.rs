@@ -19,6 +19,7 @@ use comfy_table::{Attribute, Cell, CellAlignment, ContentArrangement, Row, Table
 use rustyline::{error::ReadlineError, history::DefaultHistory, Editor};
 use std::{
     io::{self, BufRead as _, IsTerminal, Write},
+    mem::{forget, ManuallyDrop},
     path::PathBuf,
     sync::{
         atomic::{AtomicUsize, Ordering},
@@ -82,7 +83,7 @@ pub struct Limbo {
     writer: Option<Box<dyn Write>>,
     conn: Arc<turso_core::Connection>,
     pub interrupt_count: Arc<AtomicUsize>,
-    input_buff: String,
+    input_buff: ManuallyDrop<String>,
     opts: Settings,
     pub rl: Option<Editor<LimboHelper, DefaultHistory>>,
     config: Option<Config>,
@@ -157,7 +158,7 @@ impl Limbo {
             writer: Some(get_writer(&opts.output)),
             conn,
             interrupt_count,
-            input_buff: String::new(),
+            input_buff: ManuallyDrop::new(String::new()),
             opts: Settings::from(opts),
             rl: None,
             config: Some(config),
@@ -431,8 +432,6 @@ impl Limbo {
                 let _ = self.writeln(output);
             }
         }
-
-        self.reset_input();
     }
 
     fn print_query_performance_stats(&mut self, start: Instant, stats: QueryStatistics) {
@@ -491,20 +490,54 @@ impl Limbo {
 
         self.reset_line()?;
 
-        // SAFETY: we don't reset input after we handle the command
-        let value: &'static str =
-            unsafe { std::mem::transmute::<&str, &'static str>(self.input_buff.as_str()) }.trim();
+        // we are taking ownership of input_buff here
+        // its always safe because we split the string in two parts
+        fn take_usable_part(app: &mut Limbo) -> (String, usize) {
+            let ptr = app.input_buff.as_mut_ptr();
+            let (len, cap) = (app.input_buff.len(), app.input_buff.capacity());
+            app.input_buff =
+                ManuallyDrop::new(unsafe { String::from_raw_parts(ptr.add(len), 0, cap - len) });
+            (unsafe { String::from_raw_parts(ptr, len, len) }, unsafe {
+                ptr.add(len).addr()
+            })
+        }
+
+        fn concat_usable_part(app: &mut Limbo, mut part: String, old_address: usize) {
+            let ptr = app.input_buff.as_mut_ptr();
+            let (len, cap) = (app.input_buff.len(), app.input_buff.capacity());
+
+            // if the address is not the same, meaning the string has been reallocated
+            // so we just drop the part we took earlier
+            if ptr.addr() != old_address {
+                return;
+            }
+
+            let head_ptr = part.as_mut_ptr();
+            let (head_len, head_cap) = (part.len(), part.capacity());
+            forget(part); // move this part into `input_buff`
+            app.input_buff = ManuallyDrop::new(unsafe {
+                String::from_raw_parts(head_ptr, head_len + len, head_cap + cap)
+            });
+        }
+
+        let value = self.input_buff.trim();
         match (value.starts_with('.'), value.ends_with(';')) {
             (true, _) => {
-                self.handle_dot_command(value.strip_prefix('.').unwrap());
+                let (owned_value, old_address) = take_usable_part(self);
+                self.handle_dot_command(owned_value.trim().strip_prefix('.').unwrap());
+                concat_usable_part(self, owned_value, old_address);
                 self.reset_input();
             }
             (false, true) => {
-                self.run_query(value);
+                let (owned_value, old_address) = take_usable_part(self);
+                self.run_query(owned_value.trim());
+                concat_usable_part(self, owned_value, old_address);
                 self.reset_input();
             }
             (false, false) if flush => {
-                self.run_query(value);
+                let (owned_value, old_address) = take_usable_part(self);
+                self.run_query(owned_value.trim());
+                concat_usable_part(self, owned_value, old_address);
                 self.reset_input();
             }
             (false, false) => {
@@ -1645,6 +1678,9 @@ fn sql_quote_string(s: &str) -> String {
 }
 impl Drop for Limbo {
     fn drop(&mut self) {
-        self.save_history()
+        self.save_history();
+        unsafe {
+            ManuallyDrop::drop(&mut self.input_buff);
+        }
     }
 }
