@@ -7,7 +7,8 @@ import subprocess
 import sys
 import tempfile
 from pathlib import Path
-from typing import Callable, List, Literal, Sequence
+from typing import List, Sequence
+
 
 def read_statements(input_path: Path) -> List[str]:
     with input_path.open("r", encoding="utf-8", errors="replace") as f:
@@ -36,7 +37,7 @@ def run_sql_and_do_integrity_check(
             check=False,
         )
         if run_proc.returncode != 0:
-            raise RuntimeError(f"cargo run failed (code {run_proc.returncode}) for candidate with {len(statements)} statements")
+            raise RuntimeError(f"cargo run failed (code {run_proc.returncode})")
 
     sqlite_cmd = [
         "sqlite3",
@@ -63,7 +64,7 @@ def run_sql_and_do_integrity_check(
 # This is done by binary searching for the minimal prefix.
 # We don't care about scenarios where some prefix P fails and then a larger prefix P' does not fail anymore;
 # We just want to find the minimal prefix that fails in some manner.
-def find_min_failing_prefix(
+def find_min_failing_prefix( # noqa: C901
     workspace_root: Path,
     statements: Sequence[str],
 ) -> List[str]:
