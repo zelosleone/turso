@@ -224,7 +224,7 @@ export class Connection {
     await this.session.close();
   }
 
-  reconnect(): void {
+  async reconnect(): Promise<void> {
     try {
       if (this.isOpen) {
         this.close();
