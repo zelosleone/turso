@@ -868,27 +868,6 @@ impl Program {
             }
         }
     }
-
-    #[rustfmt::skip]
-    pub fn explain(&self) -> String {
-        let mut buff = String::with_capacity(1024);
-        buff.push_str("addr  opcode             p1    p2    p3    p4             p5  comment\n");
-        buff.push_str("----  -----------------  ----  ----  ----  -------------  --  -------\n");
-        let indent = "  ";
-        let indent_counts = get_indent_counts(&self.insns);
-        for (addr, (insn, _)) in self.insns.iter().enumerate() {
-            let indent_count = indent_counts[addr];
-            print_insn(
-                self,
-                addr as InsnReference,
-                insn,
-                indent.repeat(indent_count),
-                &mut buff,
-            );
-            buff.push('\n');
-        }
-        buff
-    }
 }
 
 fn make_record(registers: &[Register], start_reg: &usize, count: &usize) -> ImmutableRecord {
@@ -931,82 +910,6 @@ fn trace_insn(program: &Program, addr: InsnReference, insn: &Insn) {
                 .copied())
         )
     );
-}
-
-fn print_insn(program: &Program, addr: InsnReference, insn: &Insn, indent: String, w: &mut String) {
-    let s = explain::insn_to_str(
-        program,
-        addr,
-        insn,
-        indent,
-        program.comments.as_ref().and_then(|comments| {
-            comments
-                .iter()
-                .find(|(offset, _)| *offset == addr)
-                .map(|(_, comment)| comment)
-                .copied()
-        }),
-    );
-    w.push_str(&s);
-}
-
-// The indenting rules are(from SQLite):
-//
-//  * For each "Next", "Prev", "VNext" or "VPrev" instruction, increase the ident number for
-//    all opcodes that occur between the p2 jump destination and the opcode itself.
-//
-//   * Do the previous for "Return" instructions for when P2 is positive.
-//
-//   * For each "Goto", if the jump destination is earlier in the program and ends on one of:
-//        Yield  SeekGt  SeekLt  RowSetRead  Rewind
-//     or if the P1 parameter is one instead of zero, then increase the indent number for all
-//     opcodes between the earlier instruction and "Goto"
-fn get_indent_counts(insns: &[(Insn, InsnFunction)]) -> Vec<usize> {
-    let mut indents = vec![0; insns.len()];
-
-    for (i, (insn, _)) in insns.iter().enumerate() {
-        let mut start = 0;
-        let mut end = 0;
-        match insn {
-            Insn::Next { pc_if_next, .. } | Insn::VNext { pc_if_next, .. } => {
-                let dest = pc_if_next.as_debug_int() as usize;
-                if dest < i {
-                    start = dest;
-                    end = i;
-                }
-            }
-            Insn::Prev { pc_if_prev, .. } => {
-                let dest = pc_if_prev.as_debug_int() as usize;
-                if dest < i {
-                    start = dest;
-                    end = i;
-                }
-            }
-
-            Insn::Goto { target_pc } => {
-                let dest = target_pc.as_debug_int() as usize;
-                if dest < i
-                    && matches!(
-                        insns.get(dest).map(|(insn, _)| insn),
-                        Some(Insn::Yield { .. })
-                            | Some(Insn::SeekGT { .. })
-                            | Some(Insn::SeekLT { .. })
-                            | Some(Insn::Rewind { .. })
-                    )
-                {
-                    start = dest;
-                    end = i;
-                }
-            }
-
-            _ => {}
-        }
-        for indent in indents.iter_mut().take(end).skip(start) {
-            *indent += 1;
-        }
-    }
-
-    indents
 }
 
 pub trait FromValueRow<'a> {

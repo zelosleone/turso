@@ -2325,10 +2325,6 @@ impl Statement {
     pub fn row(&self) -> Option<&Row> {
         self.state.result_row.as_ref()
     }
-
-    pub fn explain(&self) -> String {
-        self.program.explain()
-    }
 }
 
 pub type Row = vdbe::Row;
