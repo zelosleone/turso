@@ -2225,8 +2225,14 @@ impl Statement {
         };
         // Save parameters before they are reset
         let parameters = std::mem::take(&mut self.state.parameters);
-        self.state =
-            vdbe::ProgramState::new(self.program.max_registers, self.program.cursor_ref.len());
+        self._reset(
+            Some(match self.query_mode {
+                QueryMode::Normal => self.program.max_registers,
+                QueryMode::Explain => EXPLAIN_COLUMNS.len(),
+                QueryMode::ExplainQueryPlan => EXPLAIN_QUERY_PLAN_COLUMNS.len(),
+            }),
+            Some(self.program.cursor_ref.len()),
+        );
         // Load the parameters back into the state
         self.state.parameters = parameters;
         Ok(())
@@ -2326,7 +2332,11 @@ impl Statement {
     }
 
     pub fn reset(&mut self) {
-        self.state.reset();
+        self._reset(None, None);
+    }
+
+    pub fn _reset(&mut self, max_registers: Option<usize>, max_cursors: Option<usize>) {
+        self.state.reset(max_registers, max_cursors);
         self.busy = false;
     }
 

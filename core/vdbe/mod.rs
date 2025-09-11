@@ -373,8 +373,16 @@ impl ProgramState {
         self.parameters.get(&index).cloned().unwrap_or(Value::Null)
     }
 
-    pub fn reset(&mut self) {
+    pub fn reset(&mut self, max_registers: Option<usize>, max_cursors: Option<usize>) {
         self.pc = 0;
+
+        if let Some(max_cursors) = max_cursors {
+            self.cursors.resize_with(max_cursors, || None);
+        }
+        if let Some(max_resgisters) = max_registers {
+            self.registers
+                .resize_with(max_resgisters, || Register::Value(Value::Null));
+        }
         self.cursors.iter_mut().for_each(|c| *c = None);
         self.registers
             .iter_mut()
