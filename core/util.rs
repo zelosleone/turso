@@ -169,139 +169,22 @@ pub fn parse_schema_rows(
             StepResult::Row => {
                 let row = rows.row().unwrap();
                 let ty = row.get::<&str>(0)?;
-                match ty {
-                    "table" => {
-                        let root_page: i64 = row.get::<i64>(3)?;
-                        let sql: &str = row.get::<&str>(4)?;
-                        let sql_bytes = sql.as_bytes();
-                        if root_page == 0
-                            && contains_ignore_ascii_case!(sql_bytes, b"create virtual")
-                        {
-                            let name: &str = row.get::<&str>(1)?;
-                            // a virtual table is found in the sqlite_schema, but it's no
-                            // longer in the in-memory schema. We need to recreate it if
-                            // the module is loaded in the symbol table.
-                            let vtab = if let Some(vtab) = syms.vtabs.get(name) {
-                                vtab.clone()
-                            } else {
-                                let mod_name = module_name_from_sql(sql)?;
-                                crate::VirtualTable::table(
-                                    Some(name),
-                                    mod_name,
-                                    module_args_from_sql(sql)?,
-                                    syms,
-                                )?
-                            };
-                            schema.add_virtual_table(vtab);
-                        } else {
-                            let table = schema::BTreeTable::from_sql(sql, root_page as usize)?;
-
-                            // Check if this is a DBSP state table
-                            if table.name.starts_with(DBSP_TABLE_PREFIX) {
-                                // Extract the view name from __turso_internal_dbsp_state_<viewname>
-                                let view_name = table
-                                    .name
-                                    .strip_prefix(DBSP_TABLE_PREFIX)
-                                    .unwrap()
-                                    .to_string();
-                                dbsp_state_roots.insert(view_name, root_page as usize);
-                            }
-
-                            schema.add_btree_table(Arc::new(table));
-                        }
-                    }
-                    "index" => {
-                        let root_page: i64 = row.get::<i64>(3)?;
-                        match row.get::<&str>(4) {
-                            Ok(sql) => {
-                                from_sql_indexes.push(UnparsedFromSqlIndex {
-                                    table_name: row.get::<&str>(2)?.to_string(),
-                                    root_page: root_page as usize,
-                                    sql: sql.to_string(),
-                                });
-                            }
-                            _ => {
-                                // Automatic index on primary key and/or unique constraint, e.g.
-                                // table|foo|foo|2|CREATE TABLE foo (a text PRIMARY KEY, b)
-                                // index|sqlite_autoindex_foo_1|foo|3|
-                                let index_name = row.get::<&str>(1)?.to_string();
-                                let table_name = row.get::<&str>(2)?.to_string();
-                                let root_page = row.get::<i64>(3)?;
-                                match automatic_indices.entry(table_name) {
-                                    std::collections::hash_map::Entry::Vacant(e) => {
-                                        e.insert(vec![(index_name, root_page as usize)]);
-                                    }
-                                    std::collections::hash_map::Entry::Occupied(mut e) => {
-                                        e.get_mut().push((index_name, root_page as usize));
-                                    }
-                                }
-                            }
-                        }
-                    }
-                    "view" => {
-                        use crate::incremental::view::IncrementalView;
-                        use crate::schema::View;
-                        use fallible_iterator::FallibleIterator;
-                        use turso_parser::ast::{Cmd, Stmt};
-                        use turso_parser::parser::Parser;
-
-                        let name: &str = row.get::<&str>(1)?;
-                        let root_page = row.get::<i64>(3)?;
-                        let sql: &str = row.get::<&str>(4)?;
-                        let view_name = name.to_string();
-
-                        // Parse the SQL to determine if it's a regular or materialized view
-                        let mut parser = Parser::new(sql.as_bytes());
-                        if let Ok(Some(Cmd::Stmt(stmt))) = parser.next_cmd() {
-                            match stmt {
-                                Stmt::CreateMaterializedView { .. } => {
-                                    // Store materialized view info for later creation
-                                    // We'll handle reuse logic and create the actual IncrementalView
-                                    // in a later pass when we have both the main root page and DBSP state root
-                                    materialized_view_info.insert(
-                                        view_name.clone(),
-                                        (sql.to_string(), root_page as usize),
-                                    );
-
-                                    // Mark the existing view for potential reuse
-                                    if existing_views.contains_key(&view_name) {
-                                        // We'll check for reuse in the third pass
-                                    }
-                                }
-                                Stmt::CreateView {
-                                    view_name: _,
-                                    columns: column_names,
-                                    select,
-                                    ..
-                                } => {
-                                    // Extract actual columns from the SELECT statement
-                                    let view_columns =
-                                        crate::util::extract_view_columns(&select, schema);
-
-                                    // If column names were provided in CREATE VIEW (col1, col2, ...),
-                                    // use them to rename the columns
-                                    let mut final_columns = view_columns;
-                                    for (i, indexed_col) in column_names.iter().enumerate() {
-                                        if let Some(col) = final_columns.get_mut(i) {
-                                            col.name = Some(indexed_col.col_name.to_string());
-                                        }
-                                    }
-
-                                    // Create regular view
-                                    let view = View {
-                                        name: name.to_string(),
-                                        sql: sql.to_string(),
-                                        select_stmt: select,
-                                        columns: final_columns,
-                                    };
-                                    schema.add_view(view);
-                                }
-                                _ => {}
-                            }
-                        }
-                    }
-                    _ => continue,
-                }
+                let name = row.get::<&str>(1)?;
+                let table_name = row.get::<&str>(2)?;
+                let root_page = row.get::<i64>(3)?;
+                let sql = row.get::<&str>(4).ok();
+                schema.handle_schema_row(
+                    ty,
+                    name,
+                    table_name,
+                    root_page,
+                    sql,
+                    syms,
+                    &mut from_sql_indexes,
+                    &mut automatic_indices,
+                    &mut dbsp_state_roots,
+                    &mut materialized_view_info,
+                )?;
             }
             StepResult::IO => {
                 // TODO: How do we ensure that the I/O we submitted to
