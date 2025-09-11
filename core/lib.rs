@@ -2078,8 +2078,8 @@ pub struct Statement {
 
     /// indicates if the statement is a NORMAL/EXPLAIN/EXPLAIN QUERY PLAN
     query_mode: QueryMode,
-    /// Flag to show if the statement ran to completion
-    done: bool,
+    /// Flag to show if the statement was busy
+    busy: bool,
 }
 
 impl Statement {
@@ -2105,7 +2105,7 @@ impl Statement {
             pager,
             accesses_db,
             query_mode,
-            done: false,
+            busy: false,
         }
     }
     pub fn get_query_mode(&self) -> QueryMode {
@@ -2161,7 +2161,9 @@ impl Statement {
         if matches!(res, Ok(StepResult::Done)) {
             let mut conn_metrics = self.program.connection.metrics.borrow_mut();
             conn_metrics.record_statement(self.state.metrics.clone());
-            self.done = true;
+            self.busy = false;
+        } else {
+            self.busy = true;
         }
 
         res
@@ -2325,7 +2327,7 @@ impl Statement {
 
     pub fn reset(&mut self) {
         self.state.reset();
-        self.done = false;
+        self.busy = false;
     }
 
     pub fn row(&self) -> Option<&Row> {
@@ -2336,8 +2338,8 @@ impl Statement {
         &self.program.sql
     }
 
-    pub fn is_done(&self) -> bool {
-        self.done
+    pub fn is_busy(&self) -> bool {
+        self.busy
     }
 }
 

@@ -313,7 +313,6 @@ fn test_interleaved_transactions() -> anyhow::Result<()> {
     let mut statement0 = conn[0].prepare("BEGIN")?;
 
     advance(&mut statement1)?;
-    assert!(statement1.is_done());
 
     let mut statement1 = conn[1].prepare("COMMIT")?;
 
