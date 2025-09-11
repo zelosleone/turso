@@ -29,7 +29,9 @@ use std::{
 
 use tracing_appender::non_blocking::WorkerGuard;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt, EnvFilter};
-use turso_core::{Connection, Database, LimboError, OpenFlags, Statement, StepResult, Value};
+use turso_core::{
+    Connection, Database, LimboError, OpenFlags, QueryMode, Statement, StepResult, Value,
+};
 
 #[derive(Parser, Debug)]
 #[command(name = "Turso")]
@@ -460,34 +462,15 @@ impl Limbo {
         } else {
             None
         };
-        // TODO this is a quickfix. Some ideas to do case insensitive comparisons is to use
-        // Uncased or Unicase.
-        let explain_str = "explain";
-        if input
-            .trim_start()
-            .get(..explain_str.len())
-            .map(|s| s.eq_ignore_ascii_case(explain_str))
-            .unwrap_or(false)
-        {
-            match self.conn.query(input) {
-                Ok(Some(stmt)) => {
-                    let _ = self.writeln(stmt.explain().as_bytes());
-                }
-                Err(e) => {
-                    let _ = self.writeln(e.to_string());
-                }
-                _ => {}
-            }
-        } else {
-            let conn = self.conn.clone();
-            let runner = conn.query_runner(input.as_bytes());
-            for output in runner {
-                if self
-                    .print_query_result(input, output, stats.as_mut())
-                    .is_err()
-                {
-                    break;
-                }
+
+        let conn = self.conn.clone();
+        let runner = conn.query_runner(input.as_bytes());
+        for output in runner {
+            if self
+                .print_query_result(input, output, stats.as_mut())
+                .is_err()
+            {
+                break;
             }
         }
 
@@ -727,8 +710,56 @@ impl Limbo {
         mut statistics: Option<&mut QueryStatistics>,
     ) -> anyhow::Result<()> {
         match output {
-            Ok(Some(ref mut rows)) => match self.opts.output_mode {
-                OutputMode::List => {
+            Ok(Some(ref mut rows)) => match (self.opts.output_mode, rows.get_query_mode()) {
+                (_, QueryMode::Explain) => {
+                    fn get_explain_indent(
+                        indent_count: usize,
+                        curr_insn: &str,
+                        prev_insn: &str,
+                    ) -> usize {
+                        let indent_count = match prev_insn {
+                            "Rewind" | "Last" | "SorterSort" | "SeekGE" | "SeekGT" | "SeekLE"
+                            | "SeekLT" => indent_count + 1,
+                            _ => indent_count,
+                        };
+
+                        match curr_insn {
+                            "Next" | "SorterNext" | "Prev" => indent_count - 1,
+                            _ => indent_count,
+                        }
+                    }
+
+                    let _ = self.writeln(
+                        "addr  opcode             p1    p2    p3    p4             p5  comment",
+                    );
+                    let _ = self.writeln(
+                        "----  -----------------  ----  ----  ----  -------------  --  -------",
+                    );
+
+                    let mut prev_insn: String = "".to_string();
+                    let mut indent_count = 0;
+                    let indent = "  ";
+                    loop {
+                        row_step_result_query!(self, sql, rows, statistics, {
+                            let row = rows.row().unwrap();
+                            let insn = row.get_value(1).to_string();
+                            indent_count = get_explain_indent(indent_count, &insn, &prev_insn);
+                            let _ = self.writeln(format!(
+                                "{:<4}  {:<17}  {:<4}  {:<4}  {:<4}  {:<13}  {:<2}  {}",
+                                row.get_value(0).to_string(),
+                                &(indent.repeat(indent_count) + &insn),
+                                row.get_value(2).to_string(),
+                                row.get_value(3).to_string(),
+                                row.get_value(4).to_string(),
+                                row.get_value(5).to_string(),
+                                row.get_value(6).to_string(),
+                                row.get_value(7),
+                            ));
+                            prev_insn = insn;
+                        });
+                    }
+                }
+                (OutputMode::List, _) => {
                     let mut headers_printed = false;
                     loop {
                         row_step_result_query!(self, sql, rows, statistics, {
@@ -759,7 +790,7 @@ impl Limbo {
                         });
                     }
                 }
-                OutputMode::Pretty => {
+                (OutputMode::Pretty, _) => {
                     let config = self.config.as_ref().unwrap();
                     let mut table = Table::new();
                     table
@@ -808,7 +839,7 @@ impl Limbo {
                         writeln!(self, "{table}")?;
                     }
                 }
-                OutputMode::Line => {
+                (OutputMode::Line, _) => {
                     let mut first_row_printed = false;
 
                     let max_width = (0..rows.num_columns())

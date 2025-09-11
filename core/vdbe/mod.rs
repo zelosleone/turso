@@ -53,12 +53,13 @@ use crate::{
 #[cfg(feature = "json")]
 use crate::json::JsonCacheCell;
 use crate::{Connection, MvStore, Result, TransactionState};
-use builder::CursorKey;
+use builder::{CursorKey, QueryMode};
 use execute::{
     InsnFunction, InsnFunctionStepResult, OpIdxDeleteState, OpIntegrityCheckState,
     OpOpenEphemeralState,
 };
 
+use explain::{insn_to_row_with_comment, EXPLAIN_COLUMNS, EXPLAIN_QUERY_PLAN_COLUMNS};
 use regex::Regex;
 use std::{cell::Cell, collections::HashMap, num::NonZero, rc::Rc, sync::Arc};
 use tracing::{instrument, Level};
@@ -465,8 +466,88 @@ impl Program {
         self.connection.get_pager_from_database_index(idx)
     }
 
-    #[instrument(skip_all, level = Level::DEBUG)]
     pub fn step(
+        &self,
+        state: &mut ProgramState,
+        mv_store: Option<Arc<MvStore>>,
+        pager: Rc<Pager>,
+        query_mode: QueryMode,
+    ) -> Result<StepResult> {
+        match query_mode {
+            QueryMode::Normal => self.normal_step(state, mv_store, pager),
+            QueryMode::Explain => self.explain_step(state, mv_store, pager),
+            QueryMode::ExplainQueryPlan => self.explain_query_plan_step(state, mv_store, pager),
+        }
+    }
+
+    fn explain_step(
+        &self,
+        state: &mut ProgramState,
+        _mv_store: Option<Arc<MvStore>>,
+        pager: Rc<Pager>,
+    ) -> Result<StepResult> {
+        debug_assert!(state.column_count() == EXPLAIN_COLUMNS.len());
+        if self.connection.closed.get() {
+            // Connection is closed for whatever reason, rollback the transaction.
+            let state = self.connection.transaction_state.get();
+            if let TransactionState::Write { .. } = state {
+                pager.io.block(|| pager.end_tx(true, &self.connection))?;
+            }
+            return Err(LimboError::InternalError("Connection closed".to_string()));
+        }
+
+        if state.is_interrupted() {
+            return Ok(StepResult::Interrupt);
+        }
+
+        // FIXME: do we need this?
+        state.metrics.vm_steps = state.metrics.vm_steps.saturating_add(1);
+
+        if state.pc as usize >= self.insns.len() {
+            return Ok(StepResult::Done);
+        }
+
+        let (current_insn, _) = &self.insns[state.pc as usize];
+        let (opcode, p1, p2, p3, p4, p5, comment) = insn_to_row_with_comment(
+            self,
+            current_insn,
+            self.comments.as_ref().and_then(|comments| {
+                comments
+                    .iter()
+                    .find(|(offset, _)| *offset == state.pc)
+                    .map(|(_, comment)| comment)
+                    .copied()
+            }),
+        );
+
+        state.registers[0] = Register::Value(Value::Integer(state.pc as i64));
+        state.registers[1] = Register::Value(Value::from_text(&opcode));
+        state.registers[2] = Register::Value(Value::Integer(p1 as i64));
+        state.registers[3] = Register::Value(Value::Integer(p2 as i64));
+        state.registers[4] = Register::Value(Value::Integer(p3 as i64));
+        state.registers[5] = Register::Value(p4);
+        state.registers[6] = Register::Value(Value::Integer(p5 as i64));
+        state.registers[7] = Register::Value(Value::from_text(&comment));
+        state.result_row = Some(Row {
+            values: &state.registers[0] as *const Register,
+            count: EXPLAIN_COLUMNS.len(),
+        });
+        state.pc += 1;
+        Ok(StepResult::Row)
+    }
+
+    fn explain_query_plan_step(
+        &self,
+        state: &mut ProgramState,
+        _mv_store: Option<Arc<MvStore>>,
+        _pager: Rc<Pager>,
+    ) -> Result<StepResult> {
+        debug_assert!(state.column_count() == EXPLAIN_QUERY_PLAN_COLUMNS.len());
+        todo!("we need OP_Explain to be implemented first")
+    }
+
+    #[instrument(skip_all, level = Level::DEBUG)]
+    fn normal_step(
         &self,
         state: &mut ProgramState,
         mv_store: Option<Arc<MvStore>>,

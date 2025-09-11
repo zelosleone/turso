@@ -99,8 +99,8 @@ pub use types::RefValue;
 pub use types::Value;
 use util::parse_schema_rows;
 pub use util::IOExt;
-use vdbe::{builder::QueryMode, explain::EXPLAIN_COLUMNS};
-use vdbe::{builder::TableRefIdCounter, explain::EXPLAIN_QUERY_PLAN_COLUMNS};
+use vdbe::builder::TableRefIdCounter;
+pub use vdbe::{builder::QueryMode, explain::EXPLAIN_COLUMNS, explain::EXPLAIN_QUERY_PLAN_COLUMNS};
 
 /// Configuration for database features
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -970,26 +970,22 @@ impl Connection {
         self.maybe_update_schema()?;
         let pager = self.pager.borrow().clone();
         let mode = QueryMode::new(&cmd);
-        match cmd {
-            Cmd::Stmt(stmt) | Cmd::Explain(stmt) => {
-                let program = translate::translate(
-                    self.schema.borrow().deref(),
-                    stmt,
-                    pager.clone(),
-                    self.clone(),
-                    &syms,
-                    mode,
-                    input,
-                )?;
-                Ok(Statement::new(
-                    program,
-                    self._db.mv_store.clone(),
-                    pager,
-                    mode,
-                ))
-            }
-            Cmd::ExplainQueryPlan(_) => todo!(),
-        }
+        let (Cmd::Stmt(stmt) | Cmd::Explain(stmt) | Cmd::ExplainQueryPlan(stmt)) = cmd;
+        let program = translate::translate(
+            self.schema.borrow().deref(),
+            stmt,
+            pager.clone(),
+            self.clone(),
+            &syms,
+            mode,
+            input,
+        )?;
+        Ok(Statement::new(
+            program,
+            self._db.mv_store.clone(),
+            pager,
+            mode,
+        ))
     }
 
     /// Parse schema from scratch if version of schema for the connection differs from the schema cookie in the root page
@@ -1123,23 +1119,18 @@ impl Connection {
                 .unwrap()
                 .trim();
             let mode = QueryMode::new(&cmd);
-            match cmd {
-                Cmd::Stmt(stmt) | Cmd::Explain(stmt) => {
-                    let program = translate::translate(
-                        self.schema.borrow().deref(),
-                        stmt,
-                        pager.clone(),
-                        self.clone(),
-                        &syms,
-                        mode,
-                        input,
-                    )?;
-
-                    Statement::new(program, self._db.mv_store.clone(), pager.clone(), mode)
-                        .run_ignore_rows()?;
-                }
-                Cmd::ExplainQueryPlan(_) => todo!(),
-            }
+            let (Cmd::Stmt(stmt) | Cmd::Explain(stmt) | Cmd::ExplainQueryPlan(stmt)) = cmd;
+            let program = translate::translate(
+                self.schema.borrow().deref(),
+                stmt,
+                pager.clone(),
+                self.clone(),
+                &syms,
+                mode,
+                input,
+            )?;
+            Statement::new(program, self._db.mv_store.clone(), pager.clone(), mode)
+                .run_ignore_rows()?;
         }
         Ok(())
     }
@@ -1191,6 +1182,8 @@ impl Connection {
             }
             Cmd::ExplainQueryPlan(stmt) => {
                 let mut table_ref_counter = TableRefIdCounter::new();
+
+                // TODO: we need OP_Explain
                 match stmt {
                     ast::Stmt::Select(select) => {
                         let mut plan = prepare_select_plan(
@@ -1234,22 +1227,18 @@ impl Connection {
                 .trim();
             self.maybe_update_schema()?;
             let mode = QueryMode::new(&cmd);
-            match cmd {
-                Cmd::ExplainQueryPlan(_stmt) => todo!(),
-                Cmd::Stmt(stmt) | Cmd::Explain(stmt) => {
-                    let program = translate::translate(
-                        self.schema.borrow().deref(),
-                        stmt,
-                        pager.clone(),
-                        self.clone(),
-                        &syms,
-                        mode,
-                        input,
-                    )?;
-                    Statement::new(program, self._db.mv_store.clone(), pager.clone(), mode)
-                        .run_ignore_rows()?;
-                }
-            }
+            let (Cmd::Stmt(stmt) | Cmd::Explain(stmt) | Cmd::ExplainQueryPlan(stmt)) = cmd;
+            let program = translate::translate(
+                self.schema.borrow().deref(),
+                stmt,
+                pager.clone(),
+                self.clone(),
+                &syms,
+                mode,
+                input,
+            )?;
+            Statement::new(program, self._db.mv_store.clone(), pager.clone(), mode)
+                .run_ignore_rows()?;
         }
         Ok(())
     }
@@ -2097,7 +2086,14 @@ impl Statement {
         query_mode: QueryMode,
     ) -> Self {
         let accesses_db = program.accesses_db;
-        let state = vdbe::ProgramState::new(program.max_registers, program.cursor_ref.len());
+        let state = vdbe::ProgramState::new(
+            match query_mode {
+                QueryMode::Normal => program.max_registers,
+                QueryMode::Explain => EXPLAIN_COLUMNS.len(),
+                QueryMode::ExplainQueryPlan => EXPLAIN_QUERY_PLAN_COLUMNS.len(),
+            },
+            program.cursor_ref.len(),
+        );
         Self {
             program,
             state,
@@ -2125,13 +2121,20 @@ impl Statement {
 
     pub fn step(&mut self) -> Result<StepResult> {
         let res = if !self.accesses_db {
-            self.program
-                .step(&mut self.state, self.mv_store.clone(), self.pager.clone())
+            self.program.step(
+                &mut self.state,
+                self.mv_store.clone(),
+                self.pager.clone(),
+                self.query_mode,
+            )
         } else {
             const MAX_SCHEMA_RETRY: usize = 50;
-            let mut res =
-                self.program
-                    .step(&mut self.state, self.mv_store.clone(), self.pager.clone());
+            let mut res = self.program.step(
+                &mut self.state,
+                self.mv_store.clone(),
+                self.pager.clone(),
+                self.query_mode,
+            );
             for attempt in 0..MAX_SCHEMA_RETRY {
                 // Only reprepare if we still need to update schema
                 if !matches!(res, Err(LimboError::SchemaUpdated)) {
@@ -2139,9 +2142,12 @@ impl Statement {
                 }
                 tracing::debug!("reprepare: attempt={}", attempt);
                 self.reprepare()?;
-                res = self
-                    .program
-                    .step(&mut self.state, self.mv_store.clone(), self.pager.clone());
+                res = self.program.step(
+                    &mut self.state,
+                    self.mv_store.clone(),
+                    self.pager.clone(),
+                    self.query_mode,
+                );
             }
             res
         };
@@ -2196,20 +2202,18 @@ impl Statement {
             let cmd = cmd.expect("Same SQL string should be able to be parsed");
 
             let syms = conn.syms.borrow();
-
-            match cmd {
-                Cmd::Stmt(stmt) => translate::translate(
-                    conn.schema.borrow().deref(),
-                    stmt,
-                    self.pager.clone(),
-                    conn.clone(),
-                    &syms,
-                    QueryMode::Normal,
-                    &self.program.sql,
-                )?,
-                Cmd::Explain(_stmt) => todo!(),
-                Cmd::ExplainQueryPlan(_stmt) => todo!(),
-            }
+            let mode = self.query_mode;
+            debug_assert_eq!(QueryMode::new(&cmd), mode,);
+            let (Cmd::Stmt(stmt) | Cmd::Explain(stmt) | Cmd::ExplainQueryPlan(stmt)) = cmd;
+            translate::translate(
+                conn.schema.borrow().deref(),
+                stmt,
+                self.pager.clone(),
+                conn.clone(),
+                &syms,
+                mode,
+                &self.program.sql,
+            )?
         };
         // Save parameters before they are reset
         let parameters = std::mem::take(&mut self.state.parameters);
