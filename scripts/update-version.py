@@ -20,11 +20,16 @@ NPM_PACKAGES = [
     "bindings/javascript/packages/common",
     "bindings/javascript/packages/native",
     "bindings/javascript/packages/browser",
-    "sync/javascript",
+    "bindings/javascript/packages/browser-common",
+    "bindings/javascript/sync/packages/common",
+    "bindings/javascript/sync/packages/native",
+    "bindings/javascript/sync/packages/browser",
 ]
 
 NPM_WORKSPACE_PACKAGES = [
-    "@tursodatabase/database-common"
+    "@tursodatabase/database-common",
+    "@tursodatabase/database-browser-common",
+    "@tursodatabase/sync-common",
 ]
 
 NPM_WORKSPACES = [

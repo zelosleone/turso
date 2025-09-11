@@ -1275,34 +1275,36 @@ impl Pager {
             };
             pages.push(page);
             if pages.len() == IOV_MAX {
-                let c = wal
-                    .borrow_mut()
-                    .append_frames_vectored(
-                        std::mem::replace(
-                            &mut pages,
-                            Vec::with_capacity(std::cmp::min(IOV_MAX, dirty_pages.len() - idx)),
-                        ),
-                        page_sz,
-                        commit_frame,
-                    )
-                    .inspect_err(|_| {
-                        for c in completions.iter() {
-                            c.abort();
-                        }
-                    })?;
-                completions.push(c);
+                match wal.borrow_mut().append_frames_vectored(
+                    std::mem::replace(
+                        &mut pages,
+                        Vec::with_capacity(std::cmp::min(IOV_MAX, dirty_pages.len() - idx)),
+                    ),
+                    page_sz,
+                    commit_frame,
+                ) {
+                    Err(e) => {
+                        self.io.cancel(&completions)?;
+                        self.io.drain()?;
+                        return Err(e);
+                    }
+                    Ok(c) => completions.push(c),
+                }
             }
         }
         if !pages.is_empty() {
-            let c = wal
+            match wal
                 .borrow_mut()
                 .append_frames_vectored(pages, page_sz, commit_frame)
-                .inspect_err(|_| {
-                    for c in completions.iter() {
-                        c.abort();
-                    }
-                })?;
-            completions.push(c);
+            {
+                Ok(c) => completions.push(c),
+                Err(e) => {
+                    tracing::error!("cacheflush: error appending frames: {e}");
+                    self.io.cancel(&completions)?;
+                    self.io.drain()?;
+                    return Err(e);
+                }
+            }
         }
         Ok(completions)
     }
@@ -1379,9 +1381,7 @@ impl Pager {
                             match r {
                                 Ok(c) => completions.push(c),
                                 Err(e) => {
-                                    for c in &completions {
-                                        c.abort();
-                                    }
+                                    self.io.cancel(&completions)?;
                                     return Err(e);
                                 }
                             }
@@ -1984,7 +1984,7 @@ impl Pager {
                     // Freelist is not empty, so we can reuse the trunk itself as a new page
                     // and update the database's first freelist trunk page to the next trunk page.
                     header.freelist_trunk_page = next_trunk_page_id.into();
-                    header.freelist_pages = (header.freelist_pages.get() + 1).into();
+                    header.freelist_pages = (header.freelist_pages.get() - 1).into();
                     self.add_dirty(trunk_page);
                     // zero out the page
                     turso_assert!(
