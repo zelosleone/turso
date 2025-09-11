@@ -149,3 +149,96 @@ export declare class Statement {
 export interface DatabaseOpts {
   tracing?: string
 }
+export declare class GeneratorHolder {
+  resumeSync(error?: string | undefined | null): GeneratorResponse
+  resumeAsync(error?: string | undefined | null): Promise<unknown>
+}
+
+export declare class JsDataCompletion {
+  poison(err: string): void
+  status(value: number): void
+  pushBuffer(value: Buffer): void
+  pushTransform(values: Array<DatabaseRowTransformResultJs>): void
+  done(): void
+}
+
+export declare class JsProtocolIo {
+  takeRequest(): JsProtocolRequestBytes | null
+}
+
+export declare class JsProtocolRequestBytes {
+  request(): JsProtocolRequest
+  completion(): JsDataCompletion
+}
+
+export declare class SyncEngine {
+  constructor(opts: SyncEngineOpts)
+  init(): GeneratorHolder
+  ioLoopSync(): void
+  /** Runs the I/O loop asynchronously, returning a Promise. */
+  ioLoopAsync(): Promise<void>
+  protocolIo(): JsProtocolRequestBytes | null
+  sync(): GeneratorHolder
+  push(): GeneratorHolder
+  stats(): GeneratorHolder
+  pull(): GeneratorHolder
+  checkpoint(): GeneratorHolder
+  open(): Database
+  close(): void
+}
+
+export declare const enum DatabaseChangeTypeJs {
+  Insert = 0,
+  Update = 1,
+  Delete = 2
+}
+
+export interface DatabaseOpts {
+  path: string
+}
+
+export interface DatabaseRowMutationJs {
+  changeTime: number
+  tableName: string
+  id: number
+  changeType: DatabaseChangeTypeJs
+  before?: Record<string, any>
+  after?: Record<string, any>
+  updates?: Record<string, any>
+}
+
+export interface DatabaseRowStatementJs {
+  sql: string
+  values: Array<any>
+}
+
+export type DatabaseRowTransformResultJs =
+  | { type: 'Keep' }
+  | { type: 'Skip' }
+  | { type: 'Rewrite', stmt: DatabaseRowStatementJs }
+
+export type GeneratorResponse =
+  | { type: 'IO' }
+  | { type: 'Done' }
+  | { type: 'SyncEngineStats', operations: number, mainWal: number, revertWal: number, lastPullUnixTime: number, lastPushUnixTime?: number }
+
+export type JsProtocolRequest =
+  | { type: 'Http', method: string, path: string, body?: Array<number>, headers: Array<[string, string]> }
+  | { type: 'FullRead', path: string }
+  | { type: 'FullWrite', path: string, content: Array<number> }
+  | { type: 'Transform', mutations: Array<DatabaseRowMutationJs> }
+
+export interface SyncEngineOpts {
+  path: string
+  clientName?: string
+  walPullBatchSize?: number
+  tracing?: string
+  tablesIgnore?: Array<string>
+  useTransform: boolean
+  protocolVersion?: SyncEngineProtocolVersion
+}
+
+export declare const enum SyncEngineProtocolVersion {
+  Legacy = 0,
+  V1 = 1
+}

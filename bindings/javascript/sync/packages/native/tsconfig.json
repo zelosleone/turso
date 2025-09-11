@@ -5,16 +5,13 @@
     "declarationMap": true,
     "module": "nodenext",
     "target": "esnext",
-    "moduleResolution": "nodenext",
     "outDir": "dist/",
     "lib": [
-      "es2020",
-      "DOM",
-      "WebWorker"
+      "es2020"
     ],
     "paths": {
       "#index": [
-        "./index.js"
+        "./index.d.ts"
       ]
     }
   },

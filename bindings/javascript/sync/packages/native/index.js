@@ -74,13 +74,13 @@ function requireNative() {
   } else if (process.platform === 'android') {
     if (process.arch === 'arm64') {
       try {
-        return require('./turso.android-arm64.node')
+        return require('./sync.android-arm64.node')
       } catch (e) {
         loadErrors.push(e)
       }
       try {
-        const binding = require('@tursodatabase/database-android-arm64')
-        const bindingPackageVersion = require('@tursodatabase/database-android-arm64/package.json').version
+        const binding = require('@tursodatabase/sync-android-arm64')
+        const bindingPackageVersion = require('@tursodatabase/sync-android-arm64/package.json').version
         if (bindingPackageVersion !== '0.1.5' && process.env.NAPI_RS_ENFORCE_VERSION_CHECK && process.env.NAPI_RS_ENFORCE_VERSION_CHECK !== '0') {
           throw new Error(`Native binding package version mismatch, expected 0.1.5 but got ${bindingPackageVersion}. You can reinstall dependencies to fix this issue.`)
         }
@@ -90,13 +90,13 @@ function requireNative() {
       }
     } else if (process.arch === 'arm') {
       try {
-        return require('./turso.android-arm-eabi.node')
+        return require('./sync.android-arm-eabi.node')
       } catch (e) {
         loadErrors.push(e)
       }
       try {
-        const binding = require('@tursodatabase/database-android-arm-eabi')
-        const bindingPackageVersion = require('@tursodatabase/database-android-arm-eabi/package.json').version
+        const binding = require('@tursodatabase/sync-android-arm-eabi')
+        const bindingPackageVersion = require('@tursodatabase/sync-android-arm-eabi/package.json').version
         if (bindingPackageVersion !== '0.1.5' && process.env.NAPI_RS_ENFORCE_VERSION_CHECK && process.env.NAPI_RS_ENFORCE_VERSION_CHECK !== '0') {
           throw new Error(`Native binding package version mismatch, expected 0.1.5 but got ${bindingPackageVersion}. You can reinstall dependencies to fix this issue.`)
         }
@@ -110,13 +110,13 @@ function requireNative() {
   } else if (process.platform === 'win32') {
     if (process.arch === 'x64') {
       try {
-        return require('./turso.win32-x64-msvc.node')
+        return require('./sync.win32-x64-msvc.node')
       } catch (e) {
         loadErrors.push(e)
       }
       try {
-        const binding = require('@tursodatabase/database-win32-x64-msvc')
-        const bindingPackageVersion = require('@tursodatabase/database-win32-x64-msvc/package.json').version
+        const binding = require('@tursodatabase/sync-win32-x64-msvc')
+        const bindingPackageVersion = require('@tursodatabase/sync-win32-x64-msvc/package.json').version
         if (bindingPackageVersion !== '0.1.5' && process.env.NAPI_RS_ENFORCE_VERSION_CHECK && process.env.NAPI_RS_ENFORCE_VERSION_CHECK !== '0') {
           throw new Error(`Native binding package version mismatch, expected 0.1.5 but got ${bindingPackageVersion}. You can reinstall dependencies to fix this issue.`)
         }
@@ -126,13 +126,13 @@ function requireNative() {
       }
     } else if (process.arch === 'ia32') {
       try {
-        return require('./turso.win32-ia32-msvc.node')
+        return require('./sync.win32-ia32-msvc.node')
       } catch (e) {
         loadErrors.push(e)
       }
       try {
-        const binding = require('@tursodatabase/database-win32-ia32-msvc')
-        const bindingPackageVersion = require('@tursodatabase/database-win32-ia32-msvc/package.json').version
+        const binding = require('@tursodatabase/sync-win32-ia32-msvc')
+        const bindingPackageVersion = require('@tursodatabase/sync-win32-ia32-msvc/package.json').version
         if (bindingPackageVersion !== '0.1.5' && process.env.NAPI_RS_ENFORCE_VERSION_CHECK && process.env.NAPI_RS_ENFORCE_VERSION_CHECK !== '0') {
           throw new Error(`Native binding package version mismatch, expected 0.1.5 but got ${bindingPackageVersion}. You can reinstall dependencies to fix this issue.`)
         }
@@ -142,13 +142,13 @@ function requireNative() {
       }
     } else if (process.arch === 'arm64') {
       try {
-        return require('./turso.win32-arm64-msvc.node')
+        return require('./sync.win32-arm64-msvc.node')
       } catch (e) {
         loadErrors.push(e)
       }
       try {
-        const binding = require('@tursodatabase/database-win32-arm64-msvc')
-        const bindingPackageVersion = require('@tursodatabase/database-win32-arm64-msvc/package.json').version
+        const binding = require('@tursodatabase/sync-win32-arm64-msvc')
+        const bindingPackageVersion = require('@tursodatabase/sync-win32-arm64-msvc/package.json').version
         if (bindingPackageVersion !== '0.1.5' && process.env.NAPI_RS_ENFORCE_VERSION_CHECK && process.env.NAPI_RS_ENFORCE_VERSION_CHECK !== '0') {
           throw new Error(`Native binding package version mismatch, expected 0.1.5 but got ${bindingPackageVersion}. You can reinstall dependencies to fix this issue.`)
         }
@@ -161,13 +161,13 @@ function requireNative() {
     }
   } else if (process.platform === 'darwin') {
     try {
-      return require('./turso.darwin-universal.node')
+      return require('./sync.darwin-universal.node')
     } catch (e) {
       loadErrors.push(e)
     }
     try {
-      const binding = require('@tursodatabase/database-darwin-universal')
-      const bindingPackageVersion = require('@tursodatabase/database-darwin-universal/package.json').version
+      const binding = require('@tursodatabase/sync-darwin-universal')
+      const bindingPackageVersion = require('@tursodatabase/sync-darwin-universal/package.json').version
       if (bindingPackageVersion !== '0.1.5' && process.env.NAPI_RS_ENFORCE_VERSION_CHECK && process.env.NAPI_RS_ENFORCE_VERSION_CHECK !== '0') {
         throw new Error(`Native binding package version mismatch, expected 0.1.5 but got ${bindingPackageVersion}. You can reinstall dependencies to fix this issue.`)
       }
@@ -177,13 +177,13 @@ function requireNative() {
     }
     if (process.arch === 'x64') {
       try {
-        return require('./turso.darwin-x64.node')
+        return require('./sync.darwin-x64.node')
       } catch (e) {
         loadErrors.push(e)
       }
       try {
-        const binding = require('@tursodatabase/database-darwin-x64')
-        const bindingPackageVersion = require('@tursodatabase/database-darwin-x64/package.json').version
+        const binding = require('@tursodatabase/sync-darwin-x64')
+        const bindingPackageVersion = require('@tursodatabase/sync-darwin-x64/package.json').version
         if (bindingPackageVersion !== '0.1.5' && process.env.NAPI_RS_ENFORCE_VERSION_CHECK && process.env.NAPI_RS_ENFORCE_VERSION_CHECK !== '0') {
           throw new Error(`Native binding package version mismatch, expected 0.1.5 but got ${bindingPackageVersion}. You can reinstall dependencies to fix this issue.`)
         }
@@ -193,13 +193,13 @@ function requireNative() {
       }
     } else if (process.arch === 'arm64') {
       try {
-        return require('./turso.darwin-arm64.node')
+        return require('./sync.darwin-arm64.node')
       } catch (e) {
         loadErrors.push(e)
       }
       try {
-        const binding = require('@tursodatabase/database-darwin-arm64')
-        const bindingPackageVersion = require('@tursodatabase/database-darwin-arm64/package.json').version
+        const binding = require('@tursodatabase/sync-darwin-arm64')
+        const bindingPackageVersion = require('@tursodatabase/sync-darwin-arm64/package.json').version
         if (bindingPackageVersion !== '0.1.5' && process.env.NAPI_RS_ENFORCE_VERSION_CHECK && process.env.NAPI_RS_ENFORCE_VERSION_CHECK !== '0') {
           throw new Error(`Native binding package version mismatch, expected 0.1.5 but got ${bindingPackageVersion}. You can reinstall dependencies to fix this issue.`)
         }
@@ -213,13 +213,13 @@ function requireNative() {
   } else if (process.platform === 'freebsd') {
     if (process.arch === 'x64') {
       try {
-        return require('./turso.freebsd-x64.node')
+        return require('./sync.freebsd-x64.node')
       } catch (e) {
         loadErrors.push(e)
       }
       try {
-        const binding = require('@tursodatabase/database-freebsd-x64')
-        const bindingPackageVersion = require('@tursodatabase/database-freebsd-x64/package.json').version
+        const binding = require('@tursodatabase/sync-freebsd-x64')
+        const bindingPackageVersion = require('@tursodatabase/sync-freebsd-x64/package.json').version
         if (bindingPackageVersion !== '0.1.5' && process.env.NAPI_RS_ENFORCE_VERSION_CHECK && process.env.NAPI_RS_ENFORCE_VERSION_CHECK !== '0') {
           throw new Error(`Native binding package version mismatch, expected 0.1.5 but got ${bindingPackageVersion}. You can reinstall dependencies to fix this issue.`)
         }
@@ -229,13 +229,13 @@ function requireNative() {
       }
     } else if (process.arch === 'arm64') {
       try {
-        return require('./turso.freebsd-arm64.node')
+        return require('./sync.freebsd-arm64.node')
       } catch (e) {
         loadErrors.push(e)
       }
       try {
-        const binding = require('@tursodatabase/database-freebsd-arm64')
-        const bindingPackageVersion = require('@tursodatabase/database-freebsd-arm64/package.json').version
+        const binding = require('@tursodatabase/sync-freebsd-arm64')
+        const bindingPackageVersion = require('@tursodatabase/sync-freebsd-arm64/package.json').version
         if (bindingPackageVersion !== '0.1.5' && process.env.NAPI_RS_ENFORCE_VERSION_CHECK && process.env.NAPI_RS_ENFORCE_VERSION_CHECK !== '0') {
           throw new Error(`Native binding package version mismatch, expected 0.1.5 but got ${bindingPackageVersion}. You can reinstall dependencies to fix this issue.`)
         }
@@ -250,13 +250,13 @@ function requireNative() {
     if (process.arch === 'x64') {
       if (isMusl()) {
         try {
-          return require('./turso.linux-x64-musl.node')
+          return require('./sync.linux-x64-musl.node')
         } catch (e) {
           loadErrors.push(e)
         }
         try {
-          const binding = require('@tursodatabase/database-linux-x64-musl')
-          const bindingPackageVersion = require('@tursodatabase/database-linux-x64-musl/package.json').version
+          const binding = require('@tursodatabase/sync-linux-x64-musl')
+          const bindingPackageVersion = require('@tursodatabase/sync-linux-x64-musl/package.json').version
           if (bindingPackageVersion !== '0.1.5' && process.env.NAPI_RS_ENFORCE_VERSION_CHECK && process.env.NAPI_RS_ENFORCE_VERSION_CHECK !== '0') {
             throw new Error(`Native binding package version mismatch, expected 0.1.5 but got ${bindingPackageVersion}. You can reinstall dependencies to fix this issue.`)
           }
@@ -266,13 +266,13 @@ function requireNative() {
         }
       } else {
         try {
-          return require('./turso.linux-x64-gnu.node')
+          return require('./sync.linux-x64-gnu.node')
         } catch (e) {
           loadErrors.push(e)
         }
         try {
-          const binding = require('@tursodatabase/database-linux-x64-gnu')
-          const bindingPackageVersion = require('@tursodatabase/database-linux-x64-gnu/package.json').version
+          const binding = require('@tursodatabase/sync-linux-x64-gnu')
+          const bindingPackageVersion = require('@tursodatabase/sync-linux-x64-gnu/package.json').version
           if (bindingPackageVersion !== '0.1.5' && process.env.NAPI_RS_ENFORCE_VERSION_CHECK && process.env.NAPI_RS_ENFORCE_VERSION_CHECK !== '0') {
             throw new Error(`Native binding package version mismatch, expected 0.1.5 but got ${bindingPackageVersion}. You can reinstall dependencies to fix this issue.`)
           }
@@ -284,13 +284,13 @@ function requireNative() {
     } else if (process.arch === 'arm64') {
       if (isMusl()) {
         try {
-          return require('./turso.linux-arm64-musl.node')
+          return require('./sync.linux-arm64-musl.node')
         } catch (e) {
           loadErrors.push(e)
         }
         try {
-          const binding = require('@tursodatabase/database-linux-arm64-musl')
-          const bindingPackageVersion = require('@tursodatabase/database-linux-arm64-musl/package.json').version
+          const binding = require('@tursodatabase/sync-linux-arm64-musl')
+          const bindingPackageVersion = require('@tursodatabase/sync-linux-arm64-musl/package.json').version
           if (bindingPackageVersion !== '0.1.5' && process.env.NAPI_RS_ENFORCE_VERSION_CHECK && process.env.NAPI_RS_ENFORCE_VERSION_CHECK !== '0') {
             throw new Error(`Native binding package version mismatch, expected 0.1.5 but got ${bindingPackageVersion}. You can reinstall dependencies to fix this issue.`)
           }
@@ -300,13 +300,13 @@ function requireNative() {
         }
       } else {
         try {
-          return require('./turso.linux-arm64-gnu.node')
+          return require('./sync.linux-arm64-gnu.node')
         } catch (e) {
           loadErrors.push(e)
         }
         try {
-          const binding = require('@tursodatabase/database-linux-arm64-gnu')
-          const bindingPackageVersion = require('@tursodatabase/database-linux-arm64-gnu/package.json').version
+          const binding = require('@tursodatabase/sync-linux-arm64-gnu')
+          const bindingPackageVersion = require('@tursodatabase/sync-linux-arm64-gnu/package.json').version
           if (bindingPackageVersion !== '0.1.5' && process.env.NAPI_RS_ENFORCE_VERSION_CHECK && process.env.NAPI_RS_ENFORCE_VERSION_CHECK !== '0') {
             throw new Error(`Native binding package version mismatch, expected 0.1.5 but got ${bindingPackageVersion}. You can reinstall dependencies to fix this issue.`)
           }
@@ -318,13 +318,13 @@ function requireNative() {
     } else if (process.arch === 'arm') {
       if (isMusl()) {
         try {
-          return require('./turso.linux-arm-musleabihf.node')
+          return require('./sync.linux-arm-musleabihf.node')
         } catch (e) {
           loadErrors.push(e)
         }
         try {
-          const binding = require('@tursodatabase/database-linux-arm-musleabihf')
-          const bindingPackageVersion = require('@tursodatabase/database-linux-arm-musleabihf/package.json').version
+          const binding = require('@tursodatabase/sync-linux-arm-musleabihf')
+          const bindingPackageVersion = require('@tursodatabase/sync-linux-arm-musleabihf/package.json').version
           if (bindingPackageVersion !== '0.1.5' && process.env.NAPI_RS_ENFORCE_VERSION_CHECK && process.env.NAPI_RS_ENFORCE_VERSION_CHECK !== '0') {
             throw new Error(`Native binding package version mismatch, expected 0.1.5 but got ${bindingPackageVersion}. You can reinstall dependencies to fix this issue.`)
           }
@@ -334,13 +334,13 @@ function requireNative() {
         }
       } else {
         try {
-          return require('./turso.linux-arm-gnueabihf.node')
+          return require('./sync.linux-arm-gnueabihf.node')
         } catch (e) {
           loadErrors.push(e)
         }
         try {
-          const binding = require('@tursodatabase/database-linux-arm-gnueabihf')
-          const bindingPackageVersion = require('@tursodatabase/database-linux-arm-gnueabihf/package.json').version
+          const binding = require('@tursodatabase/sync-linux-arm-gnueabihf')
+          const bindingPackageVersion = require('@tursodatabase/sync-linux-arm-gnueabihf/package.json').version
           if (bindingPackageVersion !== '0.1.5' && process.env.NAPI_RS_ENFORCE_VERSION_CHECK && process.env.NAPI_RS_ENFORCE_VERSION_CHECK !== '0') {
             throw new Error(`Native binding package version mismatch, expected 0.1.5 but got ${bindingPackageVersion}. You can reinstall dependencies to fix this issue.`)
           }
@@ -352,13 +352,13 @@ function requireNative() {
     } else if (process.arch === 'riscv64') {
       if (isMusl()) {
         try {
-          return require('./turso.linux-riscv64-musl.node')
+          return require('./sync.linux-riscv64-musl.node')
         } catch (e) {
           loadErrors.push(e)
         }
         try {
-          const binding = require('@tursodatabase/database-linux-riscv64-musl')
-          const bindingPackageVersion = require('@tursodatabase/database-linux-riscv64-musl/package.json').version
+          const binding = require('@tursodatabase/sync-linux-riscv64-musl')
+          const bindingPackageVersion = require('@tursodatabase/sync-linux-riscv64-musl/package.json').version
           if (bindingPackageVersion !== '0.1.5' && process.env.NAPI_RS_ENFORCE_VERSION_CHECK && process.env.NAPI_RS_ENFORCE_VERSION_CHECK !== '0') {
             throw new Error(`Native binding package version mismatch, expected 0.1.5 but got ${bindingPackageVersion}. You can reinstall dependencies to fix this issue.`)
           }
@@ -368,13 +368,13 @@ function requireNative() {
         }
       } else {
         try {
-          return require('./turso.linux-riscv64-gnu.node')
+          return require('./sync.linux-riscv64-gnu.node')
         } catch (e) {
           loadErrors.push(e)
         }
         try {
-          const binding = require('@tursodatabase/database-linux-riscv64-gnu')
-          const bindingPackageVersion = require('@tursodatabase/database-linux-riscv64-gnu/package.json').version
+          const binding = require('@tursodatabase/sync-linux-riscv64-gnu')
+          const bindingPackageVersion = require('@tursodatabase/sync-linux-riscv64-gnu/package.json').version
           if (bindingPackageVersion !== '0.1.5' && process.env.NAPI_RS_ENFORCE_VERSION_CHECK && process.env.NAPI_RS_ENFORCE_VERSION_CHECK !== '0') {
             throw new Error(`Native binding package version mismatch, expected 0.1.5 but got ${bindingPackageVersion}. You can reinstall dependencies to fix this issue.`)
           }
@@ -385,13 +385,13 @@ function requireNative() {
       }
     } else if (process.arch === 'ppc64') {
       try {
-        return require('./turso.linux-ppc64-gnu.node')
+        return require('./sync.linux-ppc64-gnu.node')
       } catch (e) {
         loadErrors.push(e)
       }
       try {
-        const binding = require('@tursodatabase/database-linux-ppc64-gnu')
-        const bindingPackageVersion = require('@tursodatabase/database-linux-ppc64-gnu/package.json').version
+        const binding = require('@tursodatabase/sync-linux-ppc64-gnu')
+        const bindingPackageVersion = require('@tursodatabase/sync-linux-ppc64-gnu/package.json').version
         if (bindingPackageVersion !== '0.1.5' && process.env.NAPI_RS_ENFORCE_VERSION_CHECK && process.env.NAPI_RS_ENFORCE_VERSION_CHECK !== '0') {
           throw new Error(`Native binding package version mismatch, expected 0.1.5 but got ${bindingPackageVersion}. You can reinstall dependencies to fix this issue.`)
         }
@@ -401,13 +401,13 @@ function requireNative() {
       }
     } else if (process.arch === 's390x') {
       try {
-        return require('./turso.linux-s390x-gnu.node')
+        return require('./sync.linux-s390x-gnu.node')
       } catch (e) {
         loadErrors.push(e)
       }
       try {
-        const binding = require('@tursodatabase/database-linux-s390x-gnu')
-        const bindingPackageVersion = require('@tursodatabase/database-linux-s390x-gnu/package.json').version
+        const binding = require('@tursodatabase/sync-linux-s390x-gnu')
+        const bindingPackageVersion = require('@tursodatabase/sync-linux-s390x-gnu/package.json').version
         if (bindingPackageVersion !== '0.1.5' && process.env.NAPI_RS_ENFORCE_VERSION_CHECK && process.env.NAPI_RS_ENFORCE_VERSION_CHECK !== '0') {
           throw new Error(`Native binding package version mismatch, expected 0.1.5 but got ${bindingPackageVersion}. You can reinstall dependencies to fix this issue.`)
         }
@@ -421,13 +421,13 @@ function requireNative() {
   } else if (process.platform === 'openharmony') {
     if (process.arch === 'arm64') {
       try {
-        return require('./turso.openharmony-arm64.node')
+        return require('./sync.openharmony-arm64.node')
       } catch (e) {
         loadErrors.push(e)
       }
       try {
-        const binding = require('@tursodatabase/database-openharmony-arm64')
-        const bindingPackageVersion = require('@tursodatabase/database-openharmony-arm64/package.json').version
+        const binding = require('@tursodatabase/sync-openharmony-arm64')
+        const bindingPackageVersion = require('@tursodatabase/sync-openharmony-arm64/package.json').version
         if (bindingPackageVersion !== '0.1.5' && process.env.NAPI_RS_ENFORCE_VERSION_CHECK && process.env.NAPI_RS_ENFORCE_VERSION_CHECK !== '0') {
           throw new Error(`Native binding package version mismatch, expected 0.1.5 but got ${bindingPackageVersion}. You can reinstall dependencies to fix this issue.`)
         }
@@ -437,13 +437,13 @@ function requireNative() {
       }
     } else if (process.arch === 'x64') {
       try {
-        return require('./turso.openharmony-x64.node')
+        return require('./sync.openharmony-x64.node')
       } catch (e) {
         loadErrors.push(e)
       }
       try {
-        const binding = require('@tursodatabase/database-openharmony-x64')
-        const bindingPackageVersion = require('@tursodatabase/database-openharmony-x64/package.json').version
+        const binding = require('@tursodatabase/sync-openharmony-x64')
+        const bindingPackageVersion = require('@tursodatabase/sync-openharmony-x64/package.json').version
         if (bindingPackageVersion !== '0.1.5' && process.env.NAPI_RS_ENFORCE_VERSION_CHECK && process.env.NAPI_RS_ENFORCE_VERSION_CHECK !== '0') {
           throw new Error(`Native binding package version mismatch, expected 0.1.5 but got ${bindingPackageVersion}. You can reinstall dependencies to fix this issue.`)
         }
@@ -453,13 +453,13 @@ function requireNative() {
       }
     } else if (process.arch === 'arm') {
       try {
-        return require('./turso.openharmony-arm.node')
+        return require('./sync.openharmony-arm.node')
       } catch (e) {
         loadErrors.push(e)
       }
       try {
-        const binding = require('@tursodatabase/database-openharmony-arm')
-        const bindingPackageVersion = require('@tursodatabase/database-openharmony-arm/package.json').version
+        const binding = require('@tursodatabase/sync-openharmony-arm')
+        const bindingPackageVersion = require('@tursodatabase/sync-openharmony-arm/package.json').version
         if (bindingPackageVersion !== '0.1.5' && process.env.NAPI_RS_ENFORCE_VERSION_CHECK && process.env.NAPI_RS_ENFORCE_VERSION_CHECK !== '0') {
           throw new Error(`Native binding package version mismatch, expected 0.1.5 but got ${bindingPackageVersion}. You can reinstall dependencies to fix this issue.`)
         }
@@ -479,7 +479,7 @@ nativeBinding = requireNative()
 
 if (!nativeBinding || process.env.NAPI_RS_FORCE_WASI) {
   try {
-    nativeBinding = require('./turso.wasi.cjs')
+    nativeBinding = require('./sync.wasi.cjs')
   } catch (err) {
     if (process.env.NAPI_RS_FORCE_WASI) {
       loadErrors.push(err)
@@ -487,7 +487,7 @@ if (!nativeBinding || process.env.NAPI_RS_FORCE_WASI) {
   }
   if (!nativeBinding) {
     try {
-      nativeBinding = require('@tursodatabase/database-wasm32-wasi')
+      nativeBinding = require('@tursodatabase/sync-wasm32-wasi')
     } catch (err) {
       if (process.env.NAPI_RS_FORCE_WASI) {
         loadErrors.push(err)
@@ -508,6 +508,13 @@ if (!nativeBinding) {
   throw new Error(`Failed to load native binding`)
 }
 
-const { Database, Statement } = nativeBinding
+const { Database, Statement, GeneratorHolder, JsDataCompletion, JsProtocolIo, JsProtocolRequestBytes, SyncEngine, DatabaseChangeTypeJs, SyncEngineProtocolVersion } = nativeBinding
 export { Database }
 export { Statement }
+export { GeneratorHolder }
+export { JsDataCompletion }
+export { JsProtocolIo }
+export { JsProtocolRequestBytes }
+export { SyncEngine }
+export { DatabaseChangeTypeJs }
+export { SyncEngineProtocolVersion }

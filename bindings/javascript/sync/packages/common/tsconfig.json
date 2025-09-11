@@ -3,20 +3,13 @@
     "skipLibCheck": true,
     "declaration": true,
     "declarationMap": true,
-    "module": "nodenext",
+    "module": "esnext",
     "target": "esnext",
-    "moduleResolution": "nodenext",
     "outDir": "dist/",
     "lib": [
       "es2020",
-      "DOM",
-      "WebWorker"
+      "dom"
     ],
-    "paths": {
-      "#index": [
-        "./index.js"
-      ]
-    }
   },
   "include": [
     "*"

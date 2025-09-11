@@ -12,7 +12,7 @@ const __wasi = new __WASI({
   version: 'preview1',
 })
 
-const __wasmUrl = new URL('./turso.wasm32-wasi.wasm', import.meta.url).href
+const __wasmUrl = new URL('./sync.wasm32-wasi.wasm', import.meta.url).href
 const __emnapiContext = __emnapiGetDefaultContext()
 
 
@@ -61,8 +61,16 @@ const {
 })
 export default __napiModule.exports
 export const Database = __napiModule.exports.Database
+export const Statement = __napiModule.exports.Statement
 export const Opfs = __napiModule.exports.Opfs
 export const OpfsFile = __napiModule.exports.OpfsFile
-export const Statement = __napiModule.exports.Statement
 export const connect = __napiModule.exports.connect
 export const initThreadPool = __napiModule.exports.initThreadPool
+export const GeneratorHolder = __napiModule.exports.GeneratorHolder
+export const JsDataCompletion = __napiModule.exports.JsDataCompletion
+export const JsProtocolIo = __napiModule.exports.JsProtocolIo
+export const JsProtocolRequestBytes = __napiModule.exports.JsProtocolRequestBytes
+export const SyncEngine = __napiModule.exports.SyncEngine
+export const DatabaseChangeTypeJs = __napiModule.exports.DatabaseChangeTypeJs
+export const SyncEngineProtocolVersion = __napiModule.exports.SyncEngineProtocolVersion
+
