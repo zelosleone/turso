@@ -1106,6 +1106,7 @@ impl Connection {
                 "The supplied SQL string contains no statements".to_string(),
             ));
         }
+        self.maybe_update_schema()?;
         let sql = sql.as_ref();
         tracing::trace!("Preparing and executing batch: {}", sql);
         let mut parser = Parser::new(sql.as_bytes());
@@ -1143,6 +1144,7 @@ impl Connection {
             return Err(LimboError::InternalError("Connection closed".to_string()));
         }
         let sql = sql.as_ref();
+        self.maybe_update_schema()?;
         tracing::trace!("Querying: {}", sql);
         let mut parser = Parser::new(sql.as_bytes());
         let cmd = parser.next_cmd()?;
@@ -1216,6 +1218,7 @@ impl Connection {
             return Err(LimboError::InternalError("Connection closed".to_string()));
         }
         let sql = sql.as_ref();
+        self.maybe_update_schema()?;
         let mut parser = Parser::new(sql.as_bytes());
         while let Some(cmd) = parser.next_cmd()? {
             let syms = self.syms.borrow();
@@ -1224,7 +1227,6 @@ impl Connection {
             let input = str::from_utf8(&sql.as_bytes()[..byte_offset_end])
                 .unwrap()
                 .trim();
-            self.maybe_update_schema()?;
             match cmd {
                 Cmd::Explain(stmt) => {
                     let program = translate::translate(
@@ -2212,7 +2214,7 @@ impl Statement {
     }
 
     pub fn run_once(&self) -> Result<()> {
-        let res = self.pager.io.run_once();
+        let res = self.pager.io.step();
         if self.program.connection.is_nested_stmt.get() {
             return res;
         }

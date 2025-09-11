@@ -2187,9 +2187,14 @@ pub fn op_transaction(
             match pager.begin_write_tx()? {
                 IOResult::Done(r) => {
                     if let LimboResult::Busy = r {
-                        pager.end_read_tx()?;
-                        conn.transaction_state.replace(TransactionState::None);
-                        conn.auto_commit.replace(true);
+                        // We failed to upgrade to write transaction so put the transaction into its original state.
+                        // That is, if the transaction had not started, end the read transaction so that next time we
+                        // start a new one.
+                        if matches!(current_state, TransactionState::None) {
+                            pager.end_read_tx()?;
+                            conn.transaction_state.replace(TransactionState::None);
+                        }
+                        assert_eq!(conn.transaction_state.get(), current_state);
                         return Ok(InsnFunctionStepResult::Busy);
                     }
                 }
@@ -2696,6 +2701,7 @@ pub enum OpSeekKey {
     IndexKeyFromRegister(usize),
 }
 
+#[derive(Debug)]
 pub enum OpSeekState {
     /// Initial state
     Start,
@@ -3006,12 +3012,21 @@ pub fn seek_internal(
 
                         // this same logic applies for indexes, but the next/prev record is expected to be found in the parent page's
                         // divider cell.
+                        turso_assert!(
+                            !cursor.skip_advance.get(),
+                            "skip_advance should not be true in the middle of a seek operation"
+                        );
                         let result = match op {
+                            // deliberately call get_next_record() instead of next() to avoid skip_advance triggering unwantedly
                             SeekOp::GT | SeekOp::GE { .. } => cursor.next()?,
                             SeekOp::LT | SeekOp::LE { .. } => cursor.prev()?,
                         };
                         match result {
-                            IOResult::Done(found) => found,
+                            IOResult::Done(found) => {
+                                cursor.has_record.set(found);
+                                cursor.invalidate_record();
+                                found
+                            }
                             IOResult::IO(io) => return Ok(SeekInternalResult::IO(io)),
                         }
                     };
@@ -5692,6 +5707,7 @@ pub fn op_idx_delete(
     );
 
     loop {
+        #[cfg(debug_assertions)]
         tracing::debug!(
             "op_idx_delete(cursor_id={}, start_reg={}, num_regs={}, rootpage={}, state={:?})",
             cursor_id,
@@ -5725,9 +5741,11 @@ pub fn op_idx_delete(
                     // If P5 is not zero, then raise an SQLITE_CORRUPT_INDEX error if no matching index entry is found
                     // Also, do not raise this (self-correcting and non-critical) error if in writable_schema mode.
                     if *raise_error_if_no_matching_entry {
-                        let record = make_record(&state.registers, start_reg, num_regs);
+                        let reg_values = (*start_reg..*start_reg + *num_regs)
+                            .map(|i| &state.registers[i])
+                            .collect::<Vec<_>>();
                         return Err(LimboError::Corrupt(format!(
-                            "IdxDelete: no matching index entry found for record {record:?}"
+                            "IdxDelete: no matching index entry found for key {reg_values:?}"
                         )));
                     }
                     state.pc += 1;
@@ -5744,9 +5762,11 @@ pub fn op_idx_delete(
                 };
 
                 if rowid.is_none() && *raise_error_if_no_matching_entry {
+                    let reg_values = (*start_reg..*start_reg + *num_regs)
+                        .map(|i| &state.registers[i])
+                        .collect::<Vec<_>>();
                     return Err(LimboError::Corrupt(format!(
-                        "IdxDelete: no matching index entry found for record {:?}",
-                        make_record(&state.registers, start_reg, num_regs)
+                        "IdxDelete: no matching index entry found for key {reg_values:?}"
                     )));
                 }
                 state.op_idx_delete_state = Some(OpIdxDeleteState::Deleting);
@@ -7344,6 +7364,9 @@ pub fn op_integrity_check(
             let mut current_root_idx = 0;
             // check freelist pages first, if there are any for database
             if freelist_trunk_page > 0 {
+                let expected_freelist_count =
+                    return_if_io!(pager.with_header(|header| header.freelist_pages.get()));
+                integrity_check_state.set_expected_freelist_count(expected_freelist_count as usize);
                 integrity_check_state.start(
                     freelist_trunk_page as usize,
                     PageCategory::FreeListTrunk,
@@ -7370,6 +7393,14 @@ pub fn op_integrity_check(
                 *current_root_idx += 1;
                 return Ok(InsnFunctionStepResult::Step);
             } else {
+                if integrity_check_state.freelist_count.actual_count
+                    != integrity_check_state.freelist_count.expected_count
+                {
+                    errors.push(IntegrityCheckError::FreelistCountMismatch {
+                        actual_count: integrity_check_state.freelist_count.actual_count,
+                        expected_count: integrity_check_state.freelist_count.expected_count,
+                    });
+                }
                 let message = if errors.is_empty() {
                     "ok".to_string()
                 } else {
@@ -8187,27 +8218,19 @@ impl Value {
         }
     }
 
-    fn to_f64(&self) -> Option<f64> {
-        match self {
-            Value::Integer(i) => Some(*i as f64),
-            Value::Float(f) => Some(*f),
-            Value::Text(t) => t.as_str().parse::<f64>().ok(),
-            _ => None,
-        }
-    }
-
     fn exec_math_unary(&self, function: &MathFunc) -> Value {
+        let v = Numeric::from_value_strict(self);
+
         // In case of some functions and integer input, return the input as is
-        if let Value::Integer(_) = self {
+        if let Numeric::Integer(i) = v {
             if matches! { function, MathFunc::Ceil | MathFunc::Ceiling | MathFunc::Floor | MathFunc::Trunc }
             {
-                return self.clone();
+                return Value::Integer(i);
             }
         }
 
-        let f = match self.to_f64() {
-            Some(f) => f,
-            None => return Value::Null,
+        let Some(f) = v.try_into_f64() else {
+            return Value::Null;
         };
 
         let result = match function {
@@ -8244,14 +8267,12 @@ impl Value {
     }
 
     fn exec_math_binary(&self, rhs: &Value, function: &MathFunc) -> Value {
-        let lhs = match self.to_f64() {
-            Some(f) => f,
-            None => return Value::Null,
+        let Some(lhs) = Numeric::from_value_strict(self).try_into_f64() else {
+            return Value::Null;
         };
 
-        let rhs = match rhs.to_f64() {
-            Some(f) => f,
-            None => return Value::Null,
+        let Some(rhs) = Numeric::from_value_strict(rhs).try_into_f64() else {
+            return Value::Null;
         };
 
         let result = match function {
@@ -8269,16 +8290,13 @@ impl Value {
     }
 
     fn exec_math_log(&self, base: Option<&Value>) -> Value {
-        let f = match self.to_f64() {
-            Some(f) => f,
-            None => return Value::Null,
+        let Some(f) = Numeric::from_value_strict(self).try_into_f64() else {
+            return Value::Null;
         };
 
-        let base = match base {
-            Some(base) => match base.to_f64() {
-                Some(f) => f,
-                None => return Value::Null,
-            },
+        let base = match base.map(|value| Numeric::from_value_strict(value).try_into_f64()) {
+            Some(Some(f)) => f,
+            Some(None) => return Value::Null,
             None => 10.0,
         };
 
@@ -8359,11 +8377,9 @@ impl Value {
 
     pub fn exec_concat(&self, rhs: &Value) -> Value {
         if let (Value::Blob(lhs), Value::Blob(rhs)) = (self, rhs) {
-            return Value::build_text(String::from_utf8_lossy(dbg!(&[
-                lhs.as_slice(),
-                rhs.as_slice()
-            ]
-            .concat())));
+            return Value::build_text(String::from_utf8_lossy(
+                &[lhs.as_slice(), rhs.as_slice()].concat(),
+            ));
         }
 
         let Some(lhs) = self.cast_text() else {
