@@ -362,6 +362,21 @@ impl Schema {
 
         pager.end_read_tx()?;
 
+        self.populate_indices(from_sql_indexes, automatic_indices)?;
+
+        self.populate_materialized_views(materialized_view_info, dbsp_state_roots)?;
+
+        Ok(())
+    }
+
+    /// Populate indices parsed from the schema.
+    /// from_sql_indexes: indices explicitly created with CREATE INDEX
+    /// automatic_indices: indices created automatically for primary key and unique constraints
+    pub fn populate_indices(
+        &mut self,
+        from_sql_indexes: Vec<UnparsedFromSqlIndex>,
+        automatic_indices: std::collections::HashMap<String, Vec<(String, usize)>>,
+    ) -> Result<()> {
         for unparsed_sql_from_index in from_sql_indexes {
             if !self.indexes_enabled() {
                 self.table_set_has_index(&unparsed_sql_from_index.table_name);
@@ -392,8 +407,15 @@ impl Schema {
                 }
             }
         }
+        Ok(())
+    }
 
-        // Third pass: Create materialized views now that we have both root pages
+    /// Populate materialized views parsed from the schema.
+    pub fn populate_materialized_views(
+        &mut self,
+        materialized_view_info: std::collections::HashMap<String, (String, usize)>,
+        dbsp_state_roots: std::collections::HashMap<String, usize>,
+    ) -> Result<()> {
         for (view_name, (sql, main_root)) in materialized_view_info {
             // Look up the DBSP state root for this view - must exist for materialized views
             let dbsp_state_root = dbsp_state_roots.get(&view_name).ok_or_else(|| {
@@ -425,7 +447,6 @@ impl Schema {
                 self.add_materialized_view_dependency(&table_name, &view_name);
             }
         }
-
         Ok(())
     }
 

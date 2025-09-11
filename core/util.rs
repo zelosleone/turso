@@ -196,88 +196,9 @@ pub fn parse_schema_rows(
             StepResult::Busy => break,
         }
     }
-    for unparsed_sql_from_index in from_sql_indexes {
-        if !schema.indexes_enabled() {
-            schema.table_set_has_index(&unparsed_sql_from_index.table_name);
-        } else {
-            let table = schema
-                .get_btree_table(&unparsed_sql_from_index.table_name)
-                .unwrap();
-            let index = schema::Index::from_sql(
-                &unparsed_sql_from_index.sql,
-                unparsed_sql_from_index.root_page,
-                table.as_ref(),
-            )?;
-            schema.add_index(Arc::new(index));
-        }
-    }
-    for automatic_index in automatic_indices {
-        if !schema.indexes_enabled() {
-            schema.table_set_has_index(&automatic_index.0);
-        } else {
-            let table = schema.get_btree_table(&automatic_index.0).unwrap();
-            let ret_index = schema::Index::automatic_from_primary_key_and_unique(
-                table.as_ref(),
-                automatic_index.1,
-            )?;
-            for index in ret_index {
-                schema.add_index(Arc::new(index));
-            }
-        }
-    }
 
-    // Third pass: Create materialized views now that we have both root pages
-    for (view_name, (sql, main_root)) in materialized_view_info {
-        // Look up the DBSP state root for this view - must exist for materialized views
-        let dbsp_state_root = dbsp_state_roots.get(&view_name).ok_or_else(|| {
-            LimboError::InternalError(format!(
-                "Materialized view {view_name} is missing its DBSP state table"
-            ))
-        })?;
-
-        // Check if we can reuse the existing view
-        let mut reuse_view = false;
-        if let Some(existing_view_mutex) = schema.get_materialized_view(&view_name) {
-            let existing_view = existing_view_mutex.lock().unwrap();
-            if let Some(existing_sql) = schema.materialized_view_sql.get(&view_name) {
-                if existing_sql == &sql {
-                    reuse_view = true;
-                }
-            }
-        }
-
-        if reuse_view {
-            // View already exists with same SQL, just update dependencies
-            let existing_view_mutex = schema.get_materialized_view(&view_name).unwrap();
-            let existing_view = existing_view_mutex.lock().unwrap();
-            let referenced_tables = existing_view.get_referenced_table_names();
-            drop(existing_view); // Release lock before modifying schema
-            for table_name in referenced_tables {
-                schema.add_materialized_view_dependency(&table_name, &view_name);
-            }
-        } else {
-            // Create new IncrementalView with both root pages
-            let incremental_view =
-                IncrementalView::from_sql(&sql, schema, main_root, *dbsp_state_root)?;
-            let referenced_tables = incremental_view.get_referenced_table_names();
-
-            // Create a Table for the materialized view
-            let table = Arc::new(schema::Table::BTree(Arc::new(schema::BTreeTable {
-                root_page: main_root,
-                name: view_name.clone(),
-                columns: incremental_view.columns.clone(), // Use the view's columns, not the base table's
-                primary_key_columns: vec![],
-                has_rowid: true,
-                is_strict: false,
-                unique_sets: None,
-            })));
-
-            schema.add_materialized_view(incremental_view, table, sql.clone());
-            for table_name in referenced_tables {
-                schema.add_materialized_view_dependency(&table_name, &view_name);
-            }
-        }
-    }
+    schema.populate_indices(from_sql_indexes, automatic_indices)?;
+    schema.populate_materialized_views(materialized_view_info, dbsp_state_roots)?;
 
     Ok(())
 }
