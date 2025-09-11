@@ -1,4 +1,5 @@
 {
+  "type": "module",
   "scripts": {
     "build": "npm run build --workspaces",
     "tsc-build": "npm run tsc-build --workspaces",
@@ -11,7 +12,8 @@
     "packages/browser-common",
     "sync/packages/common",
     "sync/packages/native",
-    "sync/packages/browser"
+    "sync/packages/browser",
+    "packages/wasm-runtime"
   ],
   "version": "0.2.0-pre.1"
 }

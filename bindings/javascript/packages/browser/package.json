@@ -10,12 +10,21 @@
   "main": "dist/promise.js",
   "packageManager": "yarn@4.9.2",
   "files": [
-    "index.js",
-    "worker.mjs",
-    "turso.wasm32-wasi.wasm",
     "dist/**",
     "README.md"
   ],
+  "exports": {
+    ".": {
+      "default": "./dist/promise-default.js"
+    },
+    "./vite": {
+      "development": "./dist/promise-vite-dev-hack.js",
+      "default": "./dist/promise-default.js"
+    },
+    "./turbopack": {
+      "default": "./dist/promise-turbopack-hack.js"
+    }
+  },
   "devDependencies": {
     "@napi-rs/cli": "^3.1.5",
     "@vitest/browser": "^3.2.4",
@@ -25,7 +34,7 @@
   },
   "scripts": {
     "napi-build": "napi build --features browser --release --platform --target wasm32-wasip1-threads --no-js --manifest-path ../../Cargo.toml --output-dir . && rm index.d.ts turso.wasi* wasi* browser.js",
-    "tsc-build": "npm exec tsc",
+    "tsc-build": "npm exec tsc && cp turso.wasm32-wasi.wasm ./dist/turso.wasm32-wasi.wasm && WASM_FILE=turso.wasm32-wasi.wasm JS_FILE=./dist/wasm-inline.js node ../../scripts/inline-wasm-base64.js",
     "build": "npm run napi-build && npm run tsc-build",
     "test": "CI=1 vitest --browser=chromium --run && CI=1 vitest --browser=firefox --run"
   },
@@ -35,11 +44,7 @@
       "wasm32-wasip1-threads"
     ]
   },
-  "imports": {
-    "#index": "./index.js"
-  },
   "dependencies": {
-    "@napi-rs/wasm-runtime": "^1.0.3",
     "@tursodatabase/database-browser-common": "^0.2.0-pre.1",
     "@tursodatabase/database-common": "^0.2.0-pre.1"
   }
