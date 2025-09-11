@@ -7646,6 +7646,32 @@ pub fn op_if_neg(
     Ok(InsnFunctionStepResult::Step)
 }
 
+mod cmath {
+    extern "C" {
+        pub fn exp(x: f64) -> f64;
+        pub fn log(x: f64) -> f64;
+        pub fn log10(x: f64) -> f64;
+        pub fn log2(x: f64) -> f64;
+        pub fn pow(x: f64, y: f64) -> f64;
+
+        pub fn sin(x: f64) -> f64;
+        pub fn sinh(x: f64) -> f64;
+        pub fn asin(x: f64) -> f64;
+        pub fn asinh(x: f64) -> f64;
+
+        pub fn cos(x: f64) -> f64;
+        pub fn cosh(x: f64) -> f64;
+        pub fn acos(x: f64) -> f64;
+        pub fn acosh(x: f64) -> f64;
+
+        pub fn tan(x: f64) -> f64;
+        pub fn tanh(x: f64) -> f64;
+        pub fn atan(x: f64) -> f64;
+        pub fn atanh(x: f64) -> f64;
+        pub fn atan2(x: f64, y: f64) -> f64;
+    }
+}
+
 impl Value {
     pub fn exec_lower(&self) -> Option<Self> {
         match self {
@@ -8233,28 +8259,32 @@ impl Value {
             return Value::Null;
         };
 
+        if matches! { function, MathFunc::Ln | MathFunc::Log10 | MathFunc::Log2 } && f <= 0.0 {
+            return Value::Null;
+        }
+
         let result = match function {
-            MathFunc::Acos => libm::acos(f),
-            MathFunc::Acosh => libm::acosh(f),
-            MathFunc::Asin => libm::asin(f),
-            MathFunc::Asinh => libm::asinh(f),
-            MathFunc::Atan => libm::atan(f),
-            MathFunc::Atanh => libm::atanh(f),
+            MathFunc::Acos => unsafe { cmath::acos(f) },
+            MathFunc::Acosh => unsafe { cmath::acosh(f) },
+            MathFunc::Asin => unsafe { cmath::asin(f) },
+            MathFunc::Asinh => unsafe { cmath::asinh(f) },
+            MathFunc::Atan => unsafe { cmath::atan(f) },
+            MathFunc::Atanh => unsafe { cmath::atanh(f) },
             MathFunc::Ceil | MathFunc::Ceiling => libm::ceil(f),
-            MathFunc::Cos => libm::cos(f),
-            MathFunc::Cosh => libm::cosh(f),
+            MathFunc::Cos => unsafe { cmath::cos(f) },
+            MathFunc::Cosh => unsafe { cmath::cosh(f) },
             MathFunc::Degrees => f.to_degrees(),
-            MathFunc::Exp => libm::exp(f),
+            MathFunc::Exp => unsafe { cmath::exp(f) },
             MathFunc::Floor => libm::floor(f),
-            MathFunc::Ln => libm::log(f),
-            MathFunc::Log10 => libm::log10(f),
-            MathFunc::Log2 => libm::log2(f),
+            MathFunc::Ln => unsafe { cmath::log(f) },
+            MathFunc::Log10 => unsafe { cmath::log10(f) },
+            MathFunc::Log2 => unsafe { cmath::log2(f) },
             MathFunc::Radians => f.to_radians(),
-            MathFunc::Sin => libm::sin(f),
-            MathFunc::Sinh => libm::sinh(f),
+            MathFunc::Sin => unsafe { cmath::sin(f) },
+            MathFunc::Sinh => unsafe { cmath::sinh(f) },
             MathFunc::Sqrt => libm::sqrt(f),
-            MathFunc::Tan => libm::tan(f),
-            MathFunc::Tanh => libm::tanh(f),
+            MathFunc::Tan => unsafe { cmath::tan(f) },
+            MathFunc::Tanh => unsafe { cmath::tanh(f) },
             MathFunc::Trunc => libm::trunc(f),
             _ => unreachable!("Unexpected mathematical unary function {:?}", function),
         };
@@ -8276,9 +8306,9 @@ impl Value {
         };
 
         let result = match function {
-            MathFunc::Atan2 => libm::atan2(lhs, rhs),
+            MathFunc::Atan2 => unsafe { cmath::atan2(lhs, rhs) },
             MathFunc::Mod => libm::fmod(lhs, rhs),
-            MathFunc::Pow | MathFunc::Power => libm::pow(lhs, rhs),
+            MathFunc::Pow | MathFunc::Power => unsafe { cmath::pow(lhs, rhs) },
             _ => unreachable!("Unexpected mathematical binary function {:?}", function),
         };
 
