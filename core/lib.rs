@@ -99,8 +99,8 @@ pub use types::RefValue;
 pub use types::Value;
 use util::parse_schema_rows;
 pub use util::IOExt;
-use vdbe::builder::QueryMode;
-use vdbe::builder::TableRefIdCounter;
+use vdbe::{builder::QueryMode, explain::EXPLAIN_COLUMNS};
+use vdbe::{builder::TableRefIdCounter, explain::EXPLAIN_QUERY_PLAN_COLUMNS};
 
 /// Configuration for database features
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -2107,6 +2107,9 @@ impl Statement {
             query_mode,
         }
     }
+    pub fn get_query_mode(&self) -> QueryMode {
+        return self.query_mode;
+    }
 
     pub fn n_change(&self) -> i64 {
         self.program.n_change.get()
@@ -2242,14 +2245,24 @@ impl Statement {
     }
 
     pub fn num_columns(&self) -> usize {
-        self.program.result_columns.len()
+        match self.query_mode {
+            QueryMode::Normal => self.program.result_columns.len(),
+            QueryMode::Explain => EXPLAIN_COLUMNS.len(),
+            QueryMode::ExplainQueryPlan => EXPLAIN_QUERY_PLAN_COLUMNS.len(),
+        }
     }
 
     pub fn get_column_name(&self, idx: usize) -> Cow<str> {
-        let column = &self.program.result_columns.get(idx).expect("No column");
-        match column.name(&self.program.table_references) {
-            Some(name) => Cow::Borrowed(name),
-            None => Cow::Owned(column.expr.to_string()),
+        match self.query_mode {
+            QueryMode::Normal => {
+                let column = &self.program.result_columns.get(idx).expect("No column");
+                match column.name(&self.program.table_references) {
+                    Some(name) => Cow::Borrowed(name),
+                    None => Cow::Owned(column.expr.to_string()),
+                }
+            }
+            QueryMode::Explain => Cow::Borrowed(EXPLAIN_COLUMNS[idx]),
+            QueryMode::ExplainQueryPlan => Cow::Borrowed(EXPLAIN_QUERY_PLAN_COLUMNS[idx]),
         }
     }
 

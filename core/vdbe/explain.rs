@@ -5,6 +5,9 @@ use crate::vdbe::{builder::CursorType, insn::RegisterOrLiteral};
 use super::{Insn, InsnReference, Program, Value};
 use crate::function::{Func, ScalarFunc};
 
+pub const EXPLAIN_COLUMNS: [&str; 8] = ["addr", "opcode", "p1", "p2", "p3", "p4", "p5", "comment"];
+pub const EXPLAIN_QUERY_PLAN_COLUMNS: [&str; 4] = ["id", "parent", "notused", "detail"];
+
 pub fn insn_to_str(
     program: &Program,
     addr: InsnReference,
