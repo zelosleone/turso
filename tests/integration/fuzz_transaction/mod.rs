@@ -731,10 +731,6 @@ async fn multiple_connections_fuzz(mvcc_enabled: bool) {
                         let columns = stmt.columns();
                         let mut rows = stmt.query(()).await.unwrap();
 
-                        if let Some(tx_id) = *current_tx_id {
-                            shared_shadow_db.take_snapshot_if_not_exists(tx_id);
-                        }
-
                         let mut real_rows = Vec::new();
                         let ok = loop {
                             match rows.next().await {
@@ -764,6 +760,10 @@ async fn multiple_connections_fuzz(mvcc_enabled: bool) {
 
                         if !ok {
                             continue;
+                        }
+
+                        if let Some(tx_id) = *current_tx_id {
+                            shared_shadow_db.take_snapshot_if_not_exists(tx_id);
                         }
 
                         real_rows.sort_by_key(|r| r.id);
