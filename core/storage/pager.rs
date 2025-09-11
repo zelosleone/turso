@@ -217,12 +217,14 @@ impl Page {
 
     pub fn set_dirty(&self) {
         tracing::debug!("set_dirty(page={})", self.get().id);
+        self.clear_wal_tag();
         self.get().flags.fetch_or(PAGE_DIRTY, Ordering::Release);
     }
 
     pub fn clear_dirty(&self) {
         tracing::debug!("clear_dirty(page={})", self.get().id);
         self.get().flags.fetch_and(!PAGE_DIRTY, Ordering::Release);
+        self.clear_wal_tag();
     }
 
     pub fn is_loaded(&self) -> bool {
@@ -308,7 +310,7 @@ impl Page {
     #[inline]
     pub fn is_valid_for_checkpoint(&self, target_frame: u64, seq: u32) -> bool {
         let (f, s) = self.wal_tag_pair();
-        f == target_frame && s == seq && !self.is_dirty()
+        f == target_frame && s == seq && !self.is_dirty() && self.is_loaded() && !self.is_locked()
     }
 }
 
@@ -1196,12 +1198,9 @@ impl Pager {
         let page_key = PageCacheKey::new(page_idx);
         let page = page_cache.get(&page_key)?.and_then(|page| {
             if page.is_valid_for_checkpoint(target_frame, seq) {
-                tracing::trace!(
-                    "cache_get_for_checkpoint: page {} frame {} is valid",
-                    page_idx,
-                    target_frame
+                tracing::debug!(
+                    "cache_get_for_checkpoint: page {page_idx} frame {target_frame} is valid",
                 );
-                page.pin();
                 Some(page.clone())
             } else {
                 tracing::trace!(
@@ -2110,6 +2109,7 @@ impl Pager {
             ))
         })?;
         page.set_loaded();
+        page.clear_wal_tag();
         Ok(())
     }
 
@@ -2203,6 +2203,7 @@ pub fn allocate_new_page(page_id: usize, buffer_pool: &Arc<BufferPool>, offset: 
         let buffer = buffer_pool.get_page();
         let buffer = Arc::new(buffer);
         page.set_loaded();
+        page.clear_wal_tag();
         page.get().contents = Some(PageContent::new(offset, buffer));
     }
     page
