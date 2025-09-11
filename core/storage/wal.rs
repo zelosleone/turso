@@ -874,7 +874,9 @@ impl Wal for WalFile {
             }
         }
 
-        if best_idx == -1 {
+        if best_idx == -1 || best_mark != shared_max as u32 {
+            // If we cannot find a valid slot or the highest readmark has a stale max frame, we must return busy;
+            // otherwise we would not see some committed changes.
             return Ok((LimboResult::Busy, db_changed));
         }
 
