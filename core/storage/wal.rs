@@ -2085,7 +2085,7 @@ impl WalFile {
             "We must hold writer and checkpoint locks to restart the log, found: {:?}",
             self.checkpoint_guard
         );
-        tracing::info!("restart_log(mode={mode:?})");
+        tracing::debug!("restart_log(mode={mode:?})");
         {
             // Block all readers
             let mut shared = self.get_shared_mut();
