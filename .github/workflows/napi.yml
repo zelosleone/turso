@@ -211,6 +211,9 @@ jobs:
           path: bindings/javascript
           merge-multiple: true
           pattern: 'sync*'
+      - name: List packages
+        run: ls -R .
+        shell: bash
       - name: Install dependencies
         run: yarn install
       - name: Install dependencies
