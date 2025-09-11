@@ -2106,7 +2106,7 @@ impl Statement {
         }
     }
     pub fn get_query_mode(&self) -> QueryMode {
-        return self.query_mode;
+        self.query_mode
     }
 
     pub fn n_change(&self) -> i64 {

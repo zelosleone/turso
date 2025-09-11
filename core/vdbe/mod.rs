@@ -521,7 +521,7 @@ impl Program {
         );
 
         state.registers[0] = Register::Value(Value::Integer(state.pc as i64));
-        state.registers[1] = Register::Value(Value::from_text(&opcode));
+        state.registers[1] = Register::Value(Value::from_text(opcode));
         state.registers[2] = Register::Value(Value::Integer(p1 as i64));
         state.registers[3] = Register::Value(Value::Integer(p2 as i64));
         state.registers[4] = Register::Value(Value::Integer(p3 as i64));
