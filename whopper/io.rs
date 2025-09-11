@@ -1,10 +1,8 @@
-use libc::{
-    MAP_SHARED, O_CREAT, O_RDWR, PROT_READ, PROT_WRITE, close, ftruncate, mmap, munmap, open,
-};
+use memmap2::{MmapMut, MmapOptions};
 use rand::{Rng, RngCore};
 use rand_chacha::ChaCha8Rng;
 use std::collections::HashSet;
-use std::ptr;
+use std::fs::{File as StdFile, OpenOptions};
 use std::sync::{Arc, Mutex, Weak};
 use tracing::debug;
 use turso_core::{Clock, Completion, File, IO, Instant, OpenFlags, Result};
@@ -48,10 +46,7 @@ impl Drop for SimulatorIO {
         let paths: HashSet<String> = files.iter().map(|(path, _)| path.clone()).collect();
         if !self.keep_files {
             for path in paths.iter() {
-                unsafe {
-                    let c_path = std::ffi::CString::new(path.clone()).unwrap();
-                    libc::unlink(c_path.as_ptr());
-                }
+                let _ = std::fs::remove_file(path);
             }
         } else {
             for path in paths.iter() {
@@ -82,12 +77,8 @@ impl IO for SimulatorIO {
         let mut files = self.files.lock().unwrap();
         files.retain(|(p, _)| p != path);
 
-        // File descriptor and mmap will be cleaned up when the Arc<SimulatorFile> is dropped
         if !self.keep_files {
-            unsafe {
-                let c_path = std::ffi::CString::new(path).unwrap();
-                libc::unlink(c_path.as_ptr());
-            }
+            let _ = std::fs::remove_file(path);
         }
         Ok(())
     }
@@ -118,18 +109,13 @@ impl IO for SimulatorIO {
                         let byte_offset = rng.random_range(0..file_size);
                         let bit_idx = rng.random_range(0..8);
 
-                        unsafe {
-                            let old_byte = *file.data.add(byte_offset);
-                            *file.data.add(byte_offset) ^= 1 << bit_idx;
-                            println!(
-                                "Cosmic ray! File: {} - Flipped bit {} at offset {} (0x{:02x} -> 0x{:02x})",
-                                path,
-                                bit_idx,
-                                byte_offset,
-                                old_byte,
-                                *file.data.add(byte_offset)
-                            );
-                        }
+                        let mut mmap = file.mmap.lock().unwrap();
+                        let old_byte = mmap[byte_offset];
+                        mmap[byte_offset] ^= 1 << bit_idx;
+                        println!(
+                            "Cosmic ray! File: {} - Flipped bit {} at offset {} (0x{:02x} -> 0x{:02x})",
+                            path, bit_idx, byte_offset, old_byte, mmap[byte_offset]
+                        );
                     }
                 }
             }
@@ -151,57 +137,41 @@ impl IO for SimulatorIO {
 const FILE_SIZE: usize = 1 << 30; // 1 GiB
 
 struct SimulatorFile {
-    data: *mut u8,
+    mmap: Mutex<MmapMut>,
     size: Mutex<usize>,
-    fd: i32,
+    _file: StdFile,
 }
 
 impl SimulatorFile {
     fn new(file_path: &str) -> Self {
-        unsafe {
-            let c_path = std::ffi::CString::new(file_path).unwrap();
+        let file = OpenOptions::new()
+            .read(true)
+            .write(true)
+            .create(true)
+            .truncate(true)
+            .open(file_path)
+            .unwrap_or_else(|e| panic!("Failed to create file {file_path}: {e}"));
 
-            let fd = open(c_path.as_ptr(), O_CREAT | O_RDWR, 0o644);
-            if fd == -1 {
-                let errno = std::io::Error::last_os_error();
-                panic!("Failed to create file {file_path}: {errno}");
-            }
+        file.set_len(FILE_SIZE as u64)
+            .unwrap_or_else(|e| panic!("Failed to truncate file {file_path}: {e}"));
 
-            if ftruncate(fd, FILE_SIZE as i64) == -1 {
-                let errno = std::io::Error::last_os_error();
-                panic!("Failed to truncate file {file_path}: {errno}");
-            }
+        let mmap = unsafe {
+            MmapOptions::new()
+                .len(FILE_SIZE)
+                .map_mut(&file)
+                .unwrap_or_else(|e| panic!("mmap failed for file {file_path}: {e}"))
+        };
 
-            let data = mmap(
-                ptr::null_mut(),
-                FILE_SIZE,
-                PROT_READ | PROT_WRITE,
-                MAP_SHARED,
-                fd,
-                0,
-            ) as *mut u8;
-
-            if data == libc::MAP_FAILED as *mut u8 {
-                let errno = std::io::Error::last_os_error();
-                panic!("mmap failed for file {file_path}: {errno}");
-            }
-
-            Self {
-                data,
-                size: Mutex::new(0),
-                fd,
-            }
+        Self {
+            mmap: Mutex::new(mmap),
+            size: Mutex::new(0),
+            _file: file,
         }
     }
 }
 
 impl Drop for SimulatorFile {
-    fn drop(&mut self) {
-        unsafe {
-            munmap(self.data as *mut libc::c_void, FILE_SIZE);
-            close(self.fd);
-        }
-    }
+    fn drop(&mut self) {}
 }
 
 unsafe impl Send for SimulatorFile {}
@@ -214,13 +184,12 @@ impl File for SimulatorFile {
         let buffer = read_completion.buf_arc();
         let len = buffer.len();
 
-        unsafe {
-            if pos + len <= FILE_SIZE {
-                ptr::copy_nonoverlapping(self.data.add(pos), buffer.as_mut_ptr(), len);
-                c.complete(len as i32);
-            } else {
-                c.complete(0);
-            }
+        if pos + len <= FILE_SIZE {
+            let mmap = self.mmap.lock().unwrap();
+            buffer.as_mut_slice().copy_from_slice(&mmap[pos..pos + len]);
+            c.complete(len as i32);
+        } else {
+            c.complete(0);
         }
         Ok(c)
     }
@@ -234,18 +203,16 @@ impl File for SimulatorFile {
         let pos = pos as usize;
         let len = buffer.len();
 
-        unsafe {
-            if pos + len <= FILE_SIZE {
-                ptr::copy_nonoverlapping(buffer.as_ptr(), self.data.add(pos), len);
-                // Update the file size if we wrote beyond the current size
-                let mut size = self.size.lock().unwrap();
-                if pos + len > *size {
-                    *size = pos + len;
-                }
-                c.complete(len as i32);
-            } else {
-                c.complete(0);
+        if pos + len <= FILE_SIZE {
+            let mut mmap = self.mmap.lock().unwrap();
+            mmap[pos..pos + len].copy_from_slice(buffer.as_slice());
+            let mut size = self.size.lock().unwrap();
+            if pos + len > *size {
+                *size = pos + len;
             }
+            c.complete(len as i32);
+        } else {
+            c.complete(0);
         }
         Ok(c)
     }
@@ -259,11 +226,12 @@ impl File for SimulatorFile {
         let mut offset = pos as usize;
         let mut total_written = 0;
 
-        unsafe {
+        {
+            let mut mmap = self.mmap.lock().unwrap();
             for buffer in buffers {
                 let len = buffer.len();
                 if offset + len <= FILE_SIZE {
-                    ptr::copy_nonoverlapping(buffer.as_ptr(), self.data.add(offset), len);
+                    mmap[offset..offset + len].copy_from_slice(buffer.as_slice());
                     offset += len;
                     total_written += len;
                 } else {
