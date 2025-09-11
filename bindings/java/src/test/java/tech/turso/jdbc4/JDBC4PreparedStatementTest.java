@@ -341,7 +341,8 @@ class JDBC4PreparedStatementTest {
   @Test
   void execute_insert_should_return_number_of_inserted_elements() throws Exception {
     connection.prepareStatement("CREATE TABLE test (col INTEGER)").execute();
-    PreparedStatement prepareStatement = connection.prepareStatement("INSERT INTO test (col) VALUES (?), (?), (?)");
+    PreparedStatement prepareStatement =
+        connection.prepareStatement("INSERT INTO test (col) VALUES (?), (?), (?)");
     prepareStatement.setInt(1, 1);
     prepareStatement.setInt(2, 2);
     prepareStatement.setInt(3, 3);
@@ -353,8 +354,8 @@ class JDBC4PreparedStatementTest {
     connection.prepareStatement("CREATE TABLE test (col INTEGER)").execute();
     connection.prepareStatement("INSERT INTO test (col) VALUES (1), (2), (3)").execute();
     PreparedStatement preparedStatement =
-             connection.prepareStatement("UPDATE test SET col = ? where col = 1 ");
-      preparedStatement.setInt(1, 4);
+        connection.prepareStatement("UPDATE test SET col = ? where col = 1 ");
+    preparedStatement.setInt(1, 4);
     assertEquals(preparedStatement.executeUpdate(), 1);
   }
 
@@ -367,5 +368,4 @@ class JDBC4PreparedStatementTest {
     preparedStatement.setInt(1, 1);
     assertEquals(preparedStatement.executeUpdate(), 1);
   }
-
 }
