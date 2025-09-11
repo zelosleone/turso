@@ -123,3 +123,52 @@ fn test_txn_error_doesnt_rollback_txn() -> Result<()> {
 
     Ok(())
 }
+
+#[test]
+/// Connection 2 should see the initial data (table 'test' in schema + 2 rows). Regression test for #2997
+/// It should then see another created table 'test2' in schema, as well.
+fn test_transaction_visibility() {
+    let tmp_db = TempDatabase::new("test_transaction_visibility.db", true);
+    let conn1 = tmp_db.connect_limbo();
+    let conn2 = tmp_db.connect_limbo();
+
+    conn1
+        .execute("CREATE TABLE test (id INTEGER PRIMARY KEY, value TEXT)")
+        .unwrap();
+
+    conn1
+        .execute("INSERT INTO test (id, value) VALUES (1, 'initial')")
+        .unwrap();
+
+    let mut stmt = conn2.query("SELECT COUNT(*) FROM test").unwrap().unwrap();
+    loop {
+        match stmt.step().unwrap() {
+            StepResult::Row => {
+                let row = stmt.row().unwrap();
+                assert_eq!(*row.get::<&Value>(0).unwrap(), Value::Integer(1));
+            }
+            StepResult::IO => stmt.run_once().unwrap(),
+            StepResult::Done => break,
+            StepResult::Busy => panic!("database is busy"),
+            StepResult::Interrupt => panic!("interrupted"),
+        }
+    }
+
+    conn1
+        .execute("CREATE TABLE test2 (id INTEGER PRIMARY KEY, value TEXT)")
+        .unwrap();
+
+    let mut stmt = conn2.query("SELECT COUNT(*) FROM test2").unwrap().unwrap();
+    loop {
+        match stmt.step().unwrap() {
+            StepResult::Row => {
+                let row = stmt.row().unwrap();
+                assert_eq!(*row.get::<&Value>(0).unwrap(), Value::Integer(0));
+            }
+            StepResult::IO => stmt.run_once().unwrap(),
+            StepResult::Done => break,
+            StepResult::Busy => panic!("database is busy"),
+            StepResult::Interrupt => panic!("interrupted"),
+        }
+    }
+}
