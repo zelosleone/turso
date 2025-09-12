@@ -49,13 +49,13 @@ jobs:
             docker: ghcr.io/napi-rs/napi-rs/nodejs-rust:lts-debian
             build: yarn workspace @tursodatabase/sync napi-build --target x86_64-unknown-linux-gnu
           - host: macos-latest
-            target: aarch64-apple-darwin
-            artifact: db-bindings-aarch64-apple-darwin
-            build: yarn workspace @tursodatabase/database napi-build --target aarch64-apple-darwin
+            target: universal-apple-darwin
+            artifact: db-bindings-universal-apple-darwin
+            build: yarn workspace @tursodatabase/database napi-build --target universal-apple-darwin
           - host: macos-latest
-            target: aarch64-apple-darwin
-            artifact: sync-bindings-aarch64-apple-darwin
-            build: yarn workspace @tursodatabase/sync napi-build --target aarch64-apple-darwin
+            target: universal-apple-darwin
+            artifact: sync-bindings-universal-apple-darwin
+            build: yarn workspace @tursodatabase/sync napi-build --target universal-apple-darwin
           - host: blacksmith-2vcpu-ubuntu-2404-arm
             target: aarch64-unknown-linux-gnu
             artifact: db-bindings-aarch64-unknown-linux-gnu
