@@ -2321,7 +2321,7 @@ mod tests {
         let mut small_vec = SmallVec::<i32, 4>::new();
         (0..8).for_each(|i| small_vec.push(i));
 
-        (0..8).for_each(|i| {
+        (0..8usize).for_each(|i| {
             assert_eq!(small_vec.get(i), Some(i as i32));
         });
 
