@@ -568,10 +568,47 @@ impl Program {
         &self,
         state: &mut ProgramState,
         _mv_store: Option<Arc<MvStore>>,
-        _pager: Rc<Pager>,
+        pager: Rc<Pager>,
     ) -> Result<StepResult> {
         debug_assert!(state.column_count() == EXPLAIN_QUERY_PLAN_COLUMNS.len());
-        todo!("we need OP_Explain to be implemented first")
+        loop {
+            if self.connection.closed.get() {
+                // Connection is closed for whatever reason, rollback the transaction.
+                let state = self.connection.transaction_state.get();
+                if let TransactionState::Write { .. } = state {
+                    pager.io.block(|| pager.end_tx(true, &self.connection))?;
+                }
+                return Err(LimboError::InternalError("Connection closed".to_string()));
+            }
+
+            if state.is_interrupted() {
+                return Ok(StepResult::Interrupt);
+            }
+
+            // FIXME: do we need this?
+            state.metrics.vm_steps = state.metrics.vm_steps.saturating_add(1);
+
+            if state.pc as usize >= self.insns.len() {
+                return Ok(StepResult::Done);
+            }
+
+            let Insn::Explain { p1, p2, detail } = &self.insns[state.pc as usize].0 else {
+                state.pc += 1;
+                continue;
+            };
+
+            state.registers[0] = Register::Value(Value::Integer(*p1 as i64));
+            state.registers[1] =
+                Register::Value(Value::Integer(p2.as_ref().map(|p| *p).unwrap_or(0) as i64));
+            state.registers[2] = Register::Value(Value::Integer(0));
+            state.registers[3] = Register::Value(Value::from_text(detail.as_str()));
+            state.result_row = Some(Row {
+                values: &state.registers[0] as *const Register,
+                count: EXPLAIN_QUERY_PLAN_COLUMNS.len(),
+            });
+            state.pc += 1;
+            return Ok(StepResult::Row);
+        }
     }
 
     #[instrument(skip_all, level = Level::DEBUG)]

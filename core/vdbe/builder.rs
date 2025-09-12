@@ -408,7 +408,7 @@ impl ProgramBuilder {
             self.emit_insn(Insn::Explain {
                 p1: self.insns.len(),
                 p2: self.current_parent_explain_idx,
-                detail: detail,
+                detail,
             });
             if push {
                 self.current_parent_explain_idx = Some(self.insns.len() - 1);

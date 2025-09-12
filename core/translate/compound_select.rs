@@ -147,7 +147,6 @@ fn emit_compound_select(
         syms,
         right_most.table_references.joined_tables().len(),
     );
-    let is_leftmost_query = left.len() == 1;
     right_most_ctx.reg_result_cols_start = reg_result_cols_start;
     match left.pop() {
         Some((mut plan, operator)) => match operator {
@@ -191,15 +190,7 @@ fn emit_compound_select(
                     right_most_ctx.reg_offset = offset_reg;
                 }
 
-                emit_explain!(
-                    program,
-                    true,
-                    if is_leftmost_query {
-                        "LEFT-MOST SUBQUERY".to_owned()
-                    } else {
-                        "UNION ALL".to_owned()
-                    }
-                );
+                emit_explain!(program, true, "UNION ALL".to_owned());
                 emit_query(program, &mut right_most, &mut right_most_ctx)?;
                 program.pop_current_parent_explain();
                 program.preassign_label_to_next_insn(label_next_select);
@@ -244,15 +235,7 @@ fn emit_compound_select(
                     is_delete: false,
                 };
 
-                emit_explain!(
-                    program,
-                    true,
-                    if is_leftmost_query {
-                        "LEFT-MOST SUBQUERY".to_owned()
-                    } else {
-                        "UNION USING TEMP B-TREE".to_owned()
-                    }
-                );
+                emit_explain!(program, true, "UNION USING TEMP B-TREE".to_owned());
                 emit_query(program, &mut right_most, &mut right_most_ctx)?;
                 program.pop_current_parent_explain();
 
@@ -307,15 +290,7 @@ fn emit_compound_select(
                     index: right_index,
                     is_delete: false,
                 };
-                emit_explain!(
-                    program,
-                    true,
-                    if is_leftmost_query {
-                        "LEFT-MOST SUBQUERY".to_owned()
-                    } else {
-                        "INTERSECT USING TEMP B-TREE".to_owned()
-                    }
-                );
+                emit_explain!(program, true, "INTERSECT USING TEMP B-TREE".to_owned());
                 emit_query(program, &mut right_most, &mut right_most_ctx)?;
                 program.pop_current_parent_explain();
                 read_intersect_rows(
@@ -367,15 +342,7 @@ fn emit_compound_select(
                     index: index.clone(),
                     is_delete: true,
                 };
-                emit_explain!(
-                    program,
-                    true,
-                    if is_leftmost_query {
-                        "LEFT-MOST SUBQUERY".to_owned()
-                    } else {
-                        "EXCEPT USING TEMP B-TREE".to_owned()
-                    }
-                );
+                emit_explain!(program, true, "EXCEPT USING TEMP B-TREE".to_owned());
                 emit_query(program, &mut right_most, &mut right_most_ctx)?;
                 program.pop_current_parent_explain();
                 if new_index {
@@ -394,7 +361,9 @@ fn emit_compound_select(
                 right_most.offset = offset;
                 right_most_ctx.reg_offset = offset_reg;
             }
+            emit_explain!(program, true, "LEFT-MOST SUBQUERY".to_owned());
             emit_query(program, &mut right_most, &mut right_most_ctx)?;
+            program.pop_current_parent_explain();
         }
     }
 
