@@ -4473,14 +4473,11 @@ impl BTreeCursor {
     #[instrument(skip(self), level = Level::DEBUG)]
     pub fn rowid(&self) -> Result<IOResult<Option<i64>>> {
         if let Some(mv_cursor) = &self.mv_cursor {
-            if self.has_record.get() {
-                let mut mv_cursor = mv_cursor.borrow_mut();
-                return Ok(IOResult::Done(
-                    mv_cursor.current_row_id().map(|rowid| rowid.row_id),
-                ));
-            } else {
+            let mut mv_cursor = mv_cursor.borrow_mut();
+            let Some(rowid) = mv_cursor.current_row_id() else {
                 return Ok(IOResult::Done(None));
-            }
+            };
+            return Ok(IOResult::Done(Some(rowid.row_id)));
         }
         if self.get_null_flag() {
             return Ok(IOResult::Done(None));
@@ -4528,7 +4525,7 @@ impl BTreeCursor {
     /// back.
     #[instrument(skip(self), level = Level::DEBUG)]
     pub fn record(&self) -> Result<IOResult<Option<Ref<ImmutableRecord>>>> {
-        if !self.has_record.get() {
+        if !self.has_record.get() && self.mv_cursor.is_none() {
             return Ok(IOResult::Done(None));
         }
         let invalidated = self
@@ -4542,9 +4539,11 @@ impl BTreeCursor {
                     .unwrap();
             return Ok(IOResult::Done(Some(record_ref)));
         }
-        if self.mv_cursor.is_some() {
-            let mut mv_cursor = self.mv_cursor.as_ref().unwrap().borrow_mut();
-            let row = mv_cursor.current_row().unwrap().unwrap();
+        if let Some(mv_cursor) = &self.mv_cursor {
+            let mut mv_cursor = mv_cursor.borrow_mut();
+            let Some(row) = mv_cursor.current_row()? else {
+                return Ok(IOResult::Done(None));
+            };
             self.get_immutable_record_or_create()
                 .as_mut()
                 .unwrap()
