@@ -881,7 +881,7 @@ mod tests {
             ],
             has_rowid: true,
             is_strict: false,
-            unique_sets: None,
+            unique_sets: vec![],
         };
 
         // Create orders table
@@ -929,7 +929,7 @@ mod tests {
             ],
             has_rowid: true,
             is_strict: false,
-            unique_sets: None,
+            unique_sets: vec![],
         };
 
         // Create products table
@@ -965,7 +965,7 @@ mod tests {
             ],
             has_rowid: true,
             is_strict: false,
-            unique_sets: None,
+            unique_sets: vec![],
         };
 
         schema.add_btree_table(Arc::new(customers_table));
