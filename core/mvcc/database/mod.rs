@@ -1150,7 +1150,7 @@ impl<Clock: LogicalClock> MvStore<Clock> {
                     tx_id
                 );
                 tracing::debug!("begin_exclusive_tx: tx_id={} succeeded", tx_id);
-                self.txs.insert(tx_id, RwLock::new(tx));
+                self.txs.insert(tx_id, tx);
             }
         }
 
