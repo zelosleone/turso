@@ -18,8 +18,8 @@
     ".": {
       "default": "./dist/promise-default.js"
     },
-    "./bundled": {
-      "default": "./bundle/main.js"
+    "./bundle": {
+      "default": "./bundle/main.es.js"
     },
     "./vite": {
       "development": "./dist/promise-vite-dev-hack.js",

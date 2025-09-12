@@ -1,6 +1,6 @@
-import { SyncOpts, DatabaseRowMutation, DatabaseRowStatement, DatabaseRowTransformResult } from "@tursodatabase/sync-common";
+import { DatabaseOpts, SqliteError, } from "@tursodatabase/database-common"
 import { connect as promiseConnect, Database } from "./promise.js";
-import { SyncEngine, initThreadPool, MainWorker } from "./index-turbopack-hack.js";
+import { connect as nativeConnect, initThreadPool, MainWorker } from "./index-bundle.js";
 
 /**
  * Creates a new database connection asynchronously.
@@ -9,8 +9,8 @@ import { SyncEngine, initThreadPool, MainWorker } from "./index-turbopack-hack.j
  * @param {Object} opts - Options for database behavior.
  * @returns {Promise<Database>} - A promise that resolves to a Database instance.
  */
-async function connect(opts: SyncOpts): Promise<Database> {
-    return await promiseConnect(opts, x => new SyncEngine(x), async () => {
+async function connect(path: string, opts: DatabaseOpts = {}): Promise<Database> {
+    return await promiseConnect(path, opts, nativeConnect, async () => {
         await initThreadPool();
         if (MainWorker == null) {
             throw new Error("panic: MainWorker is not initialized");
@@ -19,5 +19,4 @@ async function connect(opts: SyncOpts): Promise<Database> {
     });
 }
 
-export { connect, Database, }
-export type { DatabaseRowMutation, DatabaseRowStatement, DatabaseRowTransformResult }
+export { connect, Database, SqliteError }

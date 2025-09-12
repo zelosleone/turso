@@ -1,6 +1,6 @@
 import { SyncOpts, DatabaseRowMutation, DatabaseRowStatement, DatabaseRowTransformResult } from "@tursodatabase/sync-common";
 import { connect as promiseConnect, Database } from "./promise.js";
-import { SyncEngine, initThreadPool, MainWorker } from "./index-turbopack-hack.js";
+import { SyncEngine, initThreadPool, MainWorker } from "./index-bundle.js";
 
 /**
  * Creates a new database connection asynchronously.

@@ -1,6 +1,6 @@
 import { SyncOpts, DatabaseRowMutation, DatabaseRowStatement, DatabaseRowTransformResult } from "@tursodatabase/sync-common";
-import { SyncEngine, initThreadPool, MainWorker } from "./index-vite-dev-hack.js";
 import { connect as promiseConnect, Database } from "./promise.js";
+import { SyncEngine, initThreadPool, MainWorker } from "./index-vite-dev-hack.js";
 
 /**
  * Creates a new database connection asynchronously.

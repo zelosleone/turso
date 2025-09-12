@@ -6,7 +6,7 @@ export default defineConfig({
   build: {
     lib: {
       entry: resolve(__dirname, 'promise-bundle.ts'),
-      name: 'database-browser',
+      name: 'sync-browser',
       fileName: format => `main.${format}.js`,
       formats: ['es'],
     },
