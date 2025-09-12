@@ -1081,7 +1081,6 @@ impl Wal for WalFile {
         page.set_locked();
         let frame = page.clone();
         let page_idx = page.get().id;
-        let header = self.get_shared().wal_header.clone();
         let shared_file = self.shared.clone();
         let complete = Box::new(move |res: Result<(Arc<Buffer>, i32), CompletionError>| {
             let Ok((buf, bytes_read)) = res else {
@@ -1759,7 +1758,7 @@ impl WalFile {
         pager: &Pager,
         mode: CheckpointMode,
     ) -> Result<IOResult<CheckpointResult>> {
-        'checkpoint: loop {
+        loop {
             let state = self.ongoing_checkpoint.state;
             tracing::debug!(?state);
             match state {
