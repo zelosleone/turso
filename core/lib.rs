@@ -2078,6 +2078,8 @@ pub struct Statement {
 
     /// indicates if the statement is a NORMAL/EXPLAIN/EXPLAIN QUERY PLAN
     query_mode: QueryMode,
+    /// Flag to show if the statement was busy
+    busy: bool,
 }
 
 impl Statement {
@@ -2103,6 +2105,7 @@ impl Statement {
             pager,
             accesses_db,
             query_mode,
+            busy: false,
         }
     }
     pub fn get_query_mode(&self) -> QueryMode {
@@ -2158,6 +2161,9 @@ impl Statement {
         if matches!(res, Ok(StepResult::Done)) {
             let mut conn_metrics = self.program.connection.metrics.borrow_mut();
             conn_metrics.record_statement(self.state.metrics.clone());
+            self.busy = false;
+        } else {
+            self.busy = true;
         }
 
         res
@@ -2219,7 +2225,14 @@ impl Statement {
         };
         // Save parameters before they are reset
         let parameters = std::mem::take(&mut self.state.parameters);
-        self.reset();
+        self._reset(
+            Some(match self.query_mode {
+                QueryMode::Normal => self.program.max_registers,
+                QueryMode::Explain => EXPLAIN_COLUMNS.len(),
+                QueryMode::ExplainQueryPlan => EXPLAIN_QUERY_PLAN_COLUMNS.len(),
+            }),
+            Some(self.program.cursor_ref.len()),
+        );
         // Load the parameters back into the state
         self.state.parameters = parameters;
         Ok(())
@@ -2319,11 +2332,24 @@ impl Statement {
     }
 
     pub fn reset(&mut self) {
-        self.state.reset();
+        self._reset(None, None);
+    }
+
+    pub fn _reset(&mut self, max_registers: Option<usize>, max_cursors: Option<usize>) {
+        self.state.reset(max_registers, max_cursors);
+        self.busy = false;
     }
 
     pub fn row(&self) -> Option<&Row> {
         self.state.result_row.as_ref()
+    }
+
+    pub fn get_sql(&self) -> &str {
+        &self.program.sql
+    }
+
+    pub fn is_busy(&self) -> bool {
+        self.busy
     }
 }
 
