@@ -5581,7 +5581,7 @@ pub fn op_insert(
                             .connection
                             .view_transaction_states
                             .get_or_create(view_name);
-                        tx_state.delete(key, values.clone());
+                        tx_state.delete(table_name, key, values.clone());
                     }
                 }
                 for view_name in dependent_views.iter() {
@@ -5590,7 +5590,7 @@ pub fn op_insert(
                         .view_transaction_states
                         .get_or_create(view_name);
 
-                    tx_state.insert(key, values.clone());
+                    tx_state.insert(table_name, key, values.clone());
                 }
 
                 break;
@@ -5724,7 +5724,7 @@ pub fn op_delete(
                             .connection
                             .view_transaction_states
                             .get_or_create(&view_name);
-                        tx_state.delete(key, values.clone());
+                        tx_state.delete(table_name, key, values.clone());
                     }
                 }
                 break;
