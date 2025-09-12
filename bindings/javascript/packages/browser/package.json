@@ -7,15 +7,19 @@
   },
   "type": "module",
   "license": "MIT",
-  "main": "dist/promise.js",
+  "main": "./dist/promise-default.js",
   "packageManager": "yarn@4.9.2",
   "files": [
     "dist/**",
+    "bundle/**",
     "README.md"
   ],
   "exports": {
     ".": {
       "default": "./dist/promise-default.js"
+    },
+    "./bundled": {
+      "default": "./bundle/main.js"
     },
     "./vite": {
       "development": "./dist/promise-vite-dev-hack.js",
@@ -30,12 +34,14 @@
     "@vitest/browser": "^3.2.4",
     "playwright": "^1.55.0",
     "typescript": "^5.9.2",
+    "vite": "^7.1.5",
     "vitest": "^3.2.4"
   },
   "scripts": {
     "napi-build": "napi build --features browser --release --platform --target wasm32-wasip1-threads --no-js --manifest-path ../../Cargo.toml --output-dir . && rm index.d.ts turso.wasi* wasi* browser.js",
     "tsc-build": "npm exec tsc && cp turso.wasm32-wasi.wasm ./dist/turso.wasm32-wasi.wasm && WASM_FILE=turso.wasm32-wasi.wasm JS_FILE=./dist/wasm-inline.js node ../../scripts/inline-wasm-base64.js",
-    "build": "npm run napi-build && npm run tsc-build",
+    "bundle": "vite build",
+    "build": "npm run napi-build && npm run tsc-build && npm run bundle",
     "test": "CI=1 vitest --browser=chromium --run && CI=1 vitest --browser=firefox --run"
   },
   "napi": {
