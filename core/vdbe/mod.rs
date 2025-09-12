@@ -447,7 +447,7 @@ pub struct Program {
     pub max_registers: usize,
     pub insns: Vec<(Insn, InsnFunction)>,
     pub cursor_ref: Vec<(Option<CursorKey>, CursorType)>,
-    pub comments: Option<Vec<(InsnReference, &'static str)>>,
+    pub comments: Vec<(InsnReference, &'static str)>,
     pub parameters: crate::parameters::Parameters,
     pub connection: Arc<Connection>,
     pub n_change: Cell<i64>,
@@ -511,13 +511,11 @@ impl Program {
         let (opcode, p1, p2, p3, p4, p5, comment) = insn_to_row_with_comment(
             self,
             current_insn,
-            self.comments.as_ref().and_then(|comments| {
-                comments
-                    .iter()
-                    .find(|(offset, _)| *offset == state.pc)
-                    .map(|(_, comment)| comment)
-                    .copied()
-            }),
+            self.comments
+                .iter()
+                .find(|(offset, _)| *offset == state.pc)
+                .map(|(_, comment)| comment)
+                .copied(),
         );
 
         state.registers[0] = Register::Value(Value::Integer(state.pc as i64));
@@ -903,11 +901,12 @@ fn trace_insn(program: &Program, addr: InsnReference, insn: &Insn) {
             addr,
             insn,
             String::new(),
-            program.comments.as_ref().and_then(|comments| comments
+            program
+                .comments
                 .iter()
                 .find(|(offset, _)| *offset == addr)
                 .map(|(_, comment)| comment)
-                .copied())
+                .copied()
         )
     );
 }
