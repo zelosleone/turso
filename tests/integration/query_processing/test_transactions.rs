@@ -305,8 +305,6 @@ fn test_mvcc_update_basic() {
 }
 
 #[test]
-#[ignore]
-// This test panics: cannot start a new read tx without ending an existing one, lock_value=0, expected=18446744073709551615
 fn test_mvcc_begin_concurrent_smoke() {
     let tmp_db = TempDatabase::new_with_opts(
         "test_mvcc_begin_concurrent_smoke.db",
@@ -321,8 +319,6 @@ fn test_mvcc_begin_concurrent_smoke() {
 }
 
 #[test]
-#[ignore]
-// This test panics: cannot start a new read tx without ending an existing one, lock_value=1, expected=18446744073709551615
 fn test_mvcc_concurrent_insert_basic() {
     let tmp_db = TempDatabase::new_with_opts(
         "test_mvcc_update_basic.db",
