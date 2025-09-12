@@ -449,8 +449,7 @@ struct OngoingCheckpoint {
     inflight_reads: Vec<InflightRead>,
     /// Array of atomic counters representing write operations that are currently in flight.
     inflight_writes: Vec<Arc<AtomicBool>>,
-    /// List of all page_id + frame_id combinations to be backfilled, with a boolean
-    /// to denote that a cached page was used
+    /// List of all page_id + frame_id combinations to be backfilled
     pages_to_checkpoint: Vec<(u64, u64)>,
 }
 
