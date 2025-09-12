@@ -169,7 +169,16 @@ enum DeleteState {
         /// same as `InteriorNodeReplacement::btree_depth`
         btree_depth: usize,
         post_balancing_seek_key: Option<CursorContext>,
+        interior_node_was_replaced: bool,
     },
+    /// If an interior node was replaced, we need to move back up from the subtree to the interior cell
+    /// that now has the replaced content, so that the next invocation of BTreeCursor::next() does not
+    /// stop at that cell.
+    /// The reason it is important to land here is that the replaced cell was smaller (LT) than the deleted cell,
+    /// so we must ensure we skip over it. I.e., when BTreeCursor::next() is called, it will move past the cell
+    /// that holds the replaced content.
+    /// See: https://github.com/tursodatabase/turso/issues/3045
+    PostInteriorNodeReplacement,
     Balancing {
         /// If provided, will also balance an ancestor page at depth `balance_ancestor_at_depth`.
         /// If not provided, balancing will stop as soon as a level is encountered where no balancing is required.
@@ -4639,8 +4648,9 @@ impl BTreeCursor {
     /// if we are in interior page, we need to rotate keys in order to replace current cell (InteriorNodeReplacement).
     /// 6. InteriorNodeReplacement -> we copy the left subtree leaf node into the deleted interior node's place.
     /// 7. Balancing -> perform balancing
-    /// 8. SeekAfterBalancing -> adjust the cursor to a node that is closer to the deleted value. go to Finish
-    /// 9. Finish -> Delete operation is done. Return CursorResult(Ok())
+    /// 8. PostInteriorNodeReplacement -> if an interior node was replaced, we need to advance the cursor once.
+    /// 9. SeekAfterBalancing -> adjust the cursor to a node that is closer to the deleted value. go to Finish
+    /// 10. Finish -> Delete operation is done. Return CursorResult(Ok())
     #[instrument(skip(self), level = Level::DEBUG)]
     pub fn delete(&mut self) -> Result<IOResult<()>> {
         if let Some(mv_cursor) = &self.mv_cursor {
@@ -4785,6 +4795,7 @@ impl BTreeCursor {
                         self.state = CursorState::Delete(DeleteState::CheckNeedsBalancing {
                             btree_depth: self.stack.current(),
                             post_balancing_seek_key: post_balancing_seek_key.take(),
+                            interior_node_was_replaced: false,
                         });
                     }
                 }
@@ -4892,6 +4903,7 @@ impl BTreeCursor {
                     self.state = CursorState::Delete(DeleteState::CheckNeedsBalancing {
                         btree_depth,
                         post_balancing_seek_key: post_balancing_seek_key.take(),
+                        interior_node_was_replaced: true,
                     });
                 }
 
@@ -4929,6 +4941,7 @@ impl BTreeCursor {
                     let CursorState::Delete(DeleteState::CheckNeedsBalancing {
                         btree_depth,
                         ref mut post_balancing_seek_key,
+                        interior_node_was_replaced,
                         ..
                     }) = self.state
                     else {
@@ -4958,11 +4971,28 @@ impl BTreeCursor {
                             },
                         });
                     } else {
-                        // No balancing needed, we're done
-                        self.stack.retreat();
-                        self.state = CursorState::None;
-                        return Ok(IOResult::Done(()));
+                        // No balancing needed.
+                        if interior_node_was_replaced {
+                            // If we did replace an interior node, we need to advance the cursor once to
+                            // get back at the interior node that now has the replaced content.
+                            // The reason it is important to land here is that the replaced cell was smaller (LT) than the deleted cell,
+                            // so we must ensure we skip over it. I.e., when BTreeCursor::next() is called, it will move past the cell
+                            // that holds the replaced content.
+                            self.state =
+                                CursorState::Delete(DeleteState::PostInteriorNodeReplacement);
+                        } else {
+                            // If we didn't replace an interior node, we are done,
+                            // except we need to retreat, so that the next call to BTreeCursor::next() lands at the next record (because we deleted the current one)
+                            self.stack.retreat();
+                            self.state = CursorState::None;
+                            return Ok(IOResult::Done(()));
+                        }
                     }
+                }
+                DeleteState::PostInteriorNodeReplacement => {
+                    return_if_io!(self.get_next_record());
+                    self.state = CursorState::None;
+                    return Ok(IOResult::Done(()));
                 }
 
                 DeleteState::Balancing {
