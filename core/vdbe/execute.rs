@@ -2180,38 +2180,11 @@ pub fn op_transaction(
             && matches!(new_transaction_state, TransactionState::Write { .. })
             && matches!(tx_mode, TransactionMode::Write)
         {
-            // Handle upgrade from read to write transaction for MVCC
-            // Similar to non-MVCC path, we need to try upgrading to exclusive write transaction
-            turso_assert!(
-                !conn.is_nested_stmt.get(),
-                "nested stmt should not begin a new write transaction"
-            );
-            match mv_store.begin_exclusive_tx(pager.clone()) {
-                Ok(IOResult::Done(tx_id)) => {
-                    // Successfully upgraded to exclusive write transaction
-                    // Remove the old read transaction and replace with write transaction
-                    conn.mv_transactions.borrow_mut().push(tx_id);
-                    program.connection.mv_tx_id.set(Some(tx_id));
-                }
-                Err(LimboError::Busy) => {
-                    // We failed to upgrade to write transaction so put the transaction into its original state.
-                    // For MVCC, we don't need to end the transaction like in non-MVCC case, since MVCC transactions
-                    // can be restarted automatically if they haven't performed any reads or writes yet.
-                    // Just ensure the transaction state remains in its original state.
-                    assert_eq!(conn.transaction_state.get(), current_state);
-                    return Ok(InsnFunctionStepResult::Busy);
-                }
-                Ok(IOResult::IO(io)) => {
-                    // set the transaction state to pending so we don't have to
-                    // end the transaction.
-                    program
-                        .connection
-                        .transaction_state
-                        .replace(TransactionState::PendingUpgrade);
-                    return Ok(InsnFunctionStepResult::IO(io));
-                }
-                Err(e) => return Err(e),
-            }
+            // For MVCC with concurrent transactions, we don't need to upgrade to exclusive.
+            // The existing MVCC transaction can handle both reads and writes.
+            // We only upgrade to exclusive for IMMEDIATE/EXCLUSIVE transaction modes.
+            // Since we already have an MVCC transaction from BEGIN CONCURRENT,
+            // we can just continue using it for writes.
         }
     } else {
         if matches!(tx_mode, TransactionMode::Concurrent) {
