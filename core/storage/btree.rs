@@ -38,11 +38,10 @@ use super::{
         write_varint_to_vec, IndexInteriorCell, IndexLeafCell, OverflowCell, MINIMUM_CELL_SIZE,
     },
 };
-use std::collections::{HashMap, HashSet};
 use std::{
     cell::{Cell, Ref, RefCell},
     cmp::{Ordering, Reverse},
-    collections::BinaryHeap,
+    collections::{BinaryHeap, HashMap},
     fmt::Debug,
     ops::DerefMut,
     pin::Pin,
@@ -3396,7 +3395,7 @@ impl BTreeCursor {
                     // pages_pointed_to helps us debug we did in fact create divider cells to all the new pages and the rightmost pointer,
                     // also points to the last page.
                     #[cfg(debug_assertions)]
-                    let mut pages_pointed_to = HashSet::new();
+                    let mut pages_pointed_to = std::collections::HashSet::new();
 
                     // Write right pointer in parent page to point to new rightmost page. keep in mind
                     // we update rightmost pointer first because inserting cells could defragment parent page,
