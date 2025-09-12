@@ -31,7 +31,11 @@ members = [
     "sql_generation",
     "whopper",
 ]
-exclude = ["perf/latency/limbo"]
+exclude = [
+    "perf/latency/limbo",
+    "perf/throughput/rusqlite",
+    "perf/throughput/turso"
+]
 
 [workspace.package]
 version = "0.2.0-pre.1"
