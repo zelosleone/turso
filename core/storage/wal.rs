@@ -1753,7 +1753,7 @@ impl WalFile {
         pager: &Pager,
         mode: CheckpointMode,
     ) -> Result<IOResult<CheckpointResult>> {
-        loop {
+        'checkpoint: loop {
             let state = self.ongoing_checkpoint.state;
             tracing::debug!(?state);
             match state {
@@ -1853,15 +1853,12 @@ impl WalFile {
                         tracing::trace!("Drained reads into batch");
                     }
 
-                    let seq = self.header.checkpoint_seq;
+                    let seq = self.get_shared().wal_header.lock().checkpoint_seq;
                     // Issue reads until we hit limits
                     while self.ongoing_checkpoint.should_issue_reads() {
                         let (page_id, target_frame) = self.ongoing_checkpoint.pages_to_checkpoint
                             [self.ongoing_checkpoint.current_page as usize];
-
-                        // dont use cached pages unless we hold the write lock, preventing them
-                        // from being touched from under us.
-                        if matches!(self.checkpoint_guard, Some(CheckpointLocks::Writer { .. })) {
+                        'fast_path: {
                             if let Some(cached_page) = pager.cache_get_for_checkpoint(
                                 page_id as usize,
                                 target_frame,
@@ -1873,6 +1870,13 @@ impl WalFile {
                                 let buffer = Arc::new(self.buffer_pool.get_page());
                                 buffer.as_mut_slice()[..contents.len()]
                                     .copy_from_slice(contents.as_slice());
+                                if !cached_page.is_valid_for_checkpoint(target_frame, seq) {
+                                    // check again, atomically, if the page is still valid after we
+                                    // copied a snapshot of it, if not: fallthrough to reading
+                                    // from disk
+                                    break 'fast_path;
+                                }
+
                                 // TODO: remove this eventually to actually benefit from the
                                 // performance.. for now we assert that the cached page has the
                                 // exact contents as one read from the WAL.
@@ -1889,12 +1893,8 @@ impl WalFile {
                                     let (_, wal_page) =
                                         sqlite3_ondisk::parse_wal_frame_header(&raw);
                                     let cached = buffer.as_slice();
-                                    turso_assert!(wal_page == cached, "cache fast-path returned wrong content for page {page_id} frame {target_frame}");
+                                    turso_assert!(wal_page == cached, "cached page content differs from WAL read for page_id={page_id}, frame_id={target_frame}");
                                 }
-                                turso_assert!(
-                                    cached_page.is_valid_for_checkpoint(target_frame, seq),
-                                    " should still be valid after snapshotting the page"
-                                );
                                 self.ongoing_checkpoint
                                     .pending_writes
                                     .insert(page_id as usize, buffer);
@@ -1904,7 +1904,7 @@ impl WalFile {
                                     [self.ongoing_checkpoint.current_page as usize] =
                                     (page_id, target_frame);
                                 self.ongoing_checkpoint.current_page += 1;
-                                continue;
+                                continue 'checkpoint;
                             }
                         }
                         // Issue read if page wasn't found in the page cache or doesnt meet
@@ -1992,6 +1992,9 @@ impl WalFile {
                     }
                     if mode.should_restart_log() {
                         self.restart_log(mode)?;
+                    } else {
+                        self.get_shared().wal_header.lock().checkpoint_seq =
+                            self.header.checkpoint_seq.wrapping_add(1);
                     }
 
                     // store a copy of the checkpoint result to return in the future if pragma
