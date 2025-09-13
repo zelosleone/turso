@@ -1064,7 +1064,8 @@ impl Pager {
         }
         let commit_status = return_if_io!(self.commit_dirty_pages(
             connection.wal_auto_checkpoint_disabled.get(),
-            connection.get_sync_mode()
+            connection.get_sync_mode(),
+            connection.get_data_sync_retry()
         ));
         wal.borrow().end_write_tx();
         wal.borrow().end_read_tx();
@@ -1317,6 +1318,7 @@ impl Pager {
         &self,
         wal_auto_checkpoint_disabled: bool,
         sync_mode: crate::SyncMode,
+        data_sync_retry: bool,
     ) -> Result<IOResult<PagerCommitResult>> {
         let Some(wal) = self.wal.as_ref() else {
             return Err(LimboError::InternalError(
@@ -1404,7 +1406,14 @@ impl Pager {
                 }
                 CommitState::SyncWal => {
                     self.commit_info.state.set(CommitState::AfterSyncWal);
-                    let c = wal.borrow_mut().sync()?;
+                    let sync_result = wal.borrow_mut().sync();
+                    let c = match sync_result {
+                        Ok(c) => c,
+                        Err(e) if !data_sync_retry => {
+                            panic!("fsync error (data_sync_retry=off): {e:?}");
+                        }
+                        Err(e) => return Err(e),
+                    };
                     if !c.is_completed() {
                         io_yield_one!(c);
                     }
@@ -1427,7 +1436,15 @@ impl Pager {
                     }
                 }
                 CommitState::SyncDbFile => {
-                    let c = sqlite3_ondisk::begin_sync(self.db_file.clone(), self.syncing.clone())?;
+                    let sync_result =
+                        sqlite3_ondisk::begin_sync(self.db_file.clone(), self.syncing.clone());
+                    let c = match sync_result {
+                        Ok(c) => c,
+                        Err(e) if !data_sync_retry => {
+                            panic!("fsync error on database file (data_sync_retry=off): {e:?}");
+                        }
+                        Err(e) => return Err(e),
+                    };
                     self.commit_info.state.set(CommitState::AfterSyncDbFile);
                     if !c.is_completed() {
                         io_yield_one!(c);

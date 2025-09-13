@@ -483,6 +483,7 @@ impl Database {
             encryption_key: RefCell::new(None),
             encryption_cipher_mode: Cell::new(None),
             sync_mode: Cell::new(SyncMode::Full),
+            data_sync_retry: Cell::new(false),
         });
         self.n_connections
             .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
@@ -928,6 +929,7 @@ pub struct Connection {
     encryption_key: RefCell<Option<EncryptionKey>>,
     encryption_cipher_mode: Cell<Option<CipherMode>>,
     sync_mode: Cell<SyncMode>,
+    data_sync_retry: Cell<bool>,
 }
 
 impl Drop for Connection {
@@ -1448,7 +1450,13 @@ impl Connection {
             let commit_err = if force_commit {
                 pager
                     .io
-                    .block(|| pager.commit_dirty_pages(true, self.get_sync_mode()))
+                    .block(|| {
+                        pager.commit_dirty_pages(
+                            true,
+                            self.get_sync_mode(),
+                            self.get_data_sync_retry(),
+                        )
+                    })
                     .err()
             } else {
                 None
@@ -1994,6 +2002,14 @@ impl Connection {
 
     pub fn set_sync_mode(&self, mode: SyncMode) {
         self.sync_mode.set(mode);
+    }
+
+    pub fn get_data_sync_retry(&self) -> bool {
+        self.data_sync_retry.get()
+    }
+
+    pub fn set_data_sync_retry(&self, value: bool) {
+        self.data_sync_retry.set(value);
     }
 
     /// Creates a HashSet of modules that have been loaded
