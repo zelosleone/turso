@@ -647,6 +647,11 @@ impl PageCache {
         self.capacity
     }
 
+    #[inline]
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+
     #[cfg(test)]
     fn verify_cache_integrity(&self) {
         let map = &self.map;

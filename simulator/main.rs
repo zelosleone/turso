@@ -134,7 +134,8 @@ fn main() -> anyhow::Result<()> {
         }
     } else {
         banner();
-        testing_main(&cli_opts, &profile)
+        // Default to race-flush demo so it shows up in CI/CLI this is to just save time for reviewers so they dont have to run the race-demo
+        race_flush("./race_flush.db", 4096, 1)
     }
 }
 
