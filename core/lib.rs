@@ -1167,7 +1167,7 @@ impl Connection {
         let (Cmd::Stmt(stmt) | Cmd::Explain(stmt) | Cmd::ExplainQueryPlan(stmt)) = cmd;
         let program = translate::translate(
             self.schema.borrow().deref(),
-            stmt.clone(),
+            stmt,
             pager.clone(),
             self.clone(),
             &syms,
