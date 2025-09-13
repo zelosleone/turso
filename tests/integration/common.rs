@@ -5,7 +5,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use tempfile::TempDir;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt, EnvFilter};
-use turso_core::{Connection, Database, IO};
+use turso_core::{Connection, Database, Row, StepResult, IO};
 
 #[allow(dead_code)]
 pub struct TempDatabase {
@@ -291,6 +291,45 @@ pub(crate) fn rng_from_time() -> (ChaCha8Rng, u64) {
         .as_secs();
     let rng = ChaCha8Rng::seed_from_u64(seed);
     (rng, seed)
+}
+
+pub fn run_query(tmp_db: &TempDatabase, conn: &Arc<Connection>, query: &str) -> anyhow::Result<()> {
+    run_query_core(tmp_db, conn, query, None::<fn(&Row)>)
+}
+
+pub fn run_query_on_row(
+    tmp_db: &TempDatabase,
+    conn: &Arc<Connection>,
+    query: &str,
+    on_row: impl FnMut(&Row),
+) -> anyhow::Result<()> {
+    run_query_core(tmp_db, conn, query, Some(on_row))
+}
+
+pub fn run_query_core(
+    _tmp_db: &TempDatabase,
+    conn: &Arc<Connection>,
+    query: &str,
+    mut on_row: Option<impl FnMut(&Row)>,
+) -> anyhow::Result<()> {
+    if let Some(ref mut rows) = conn.query(query)? {
+        loop {
+            match rows.step()? {
+                StepResult::IO => {
+                    rows.run_once()?;
+                }
+                StepResult::Done => break,
+                StepResult::Row => {
+                    if let Some(on_row) = on_row.as_mut() {
+                        let row = rows.row().unwrap();
+                        on_row(row)
+                    }
+                }
+                r => panic!("unexpected step result: {r:?}"),
+            }
+        }
+    };
+    Ok(())
 }
 
 #[cfg(test)]
