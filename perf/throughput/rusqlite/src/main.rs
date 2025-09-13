@@ -2,7 +2,7 @@ use clap::Parser;
 use rusqlite::{Connection, Result};
 use std::sync::{Arc, Barrier};
 use std::thread;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 #[derive(Parser)]
 #[command(name = "write-throughput")]
@@ -16,6 +16,13 @@ struct Args {
 
     #[arg(short = 'i', long = "iterations", default_value = "10")]
     iterations: usize,
+
+    #[arg(
+        long = "think",
+        default_value = "0",
+        help = "Per transaction think time (ms)"
+    )]
+    think: u64,
 }
 
 fn main() -> Result<()> {
@@ -54,6 +61,7 @@ fn main() -> Result<()> {
                 args.batch_size,
                 args.iterations,
                 barrier,
+                args.think,
             )
         });
 
@@ -118,11 +126,12 @@ fn worker_thread(
     batch_size: usize,
     iterations: usize,
     start_barrier: Arc<Barrier>,
+    think_ms: u64,
 ) -> Result<u64> {
     let conn = Connection::open(&db_path)?;
 
     conn.busy_timeout(std::time::Duration::from_secs(30))?;
-    
+
     let mut stmt = conn.prepare("INSERT INTO test_table (id, data) VALUES (?, ?)")?;
 
     start_barrier.wait();
@@ -138,7 +147,9 @@ fn worker_thread(
             stmt.execute([&id.to_string(), &format!("data_{}", id)])?;
             total_inserts += 1;
         }
-
+        if think_ms > 0 {
+            thread::sleep(std::time::Duration::from_millis(think_ms));
+        }
         conn.execute("COMMIT", [])?;
     }
 
