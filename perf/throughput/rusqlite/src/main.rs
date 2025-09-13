@@ -132,14 +132,14 @@ fn worker_thread(
 
     conn.busy_timeout(std::time::Duration::from_secs(30))?;
 
-    let mut stmt = conn.prepare("INSERT INTO test_table (id, data) VALUES (?, ?)")?;
-
     start_barrier.wait();
 
     let start_time = Instant::now();
     let mut total_inserts = 0;
 
     for iteration in 0..iterations {
+        let mut stmt = conn.prepare("INSERT INTO test_table (id, data) VALUES (?, ?)")?;
+
         conn.execute("BEGIN", [])?;
 
         for i in 0..batch_size {
