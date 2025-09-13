@@ -111,11 +111,198 @@ fn main() -> anyhow::Result<()> {
                 println!("{}", serde_json::to_string_pretty(&schema).unwrap());
                 Ok(())
             }
+            SimulatorCommand::RaceDemo { rounds, page_size } => {
+                banner();
+                let observed = race_demo(*rounds, *page_size)?;
+                if observed {
+                    println!("race-demo: data corruption observed");
+                    Ok(())
+                } else {
+                    println!("race-demo: no corruption observed after {rounds} rounds");
+                    Ok(())
+                }
+            }
+            SimulatorCommand::RaceFlush {
+                path,
+                page_size,
+                page_idx,
+            } => {
+                banner();
+                race_flush(path, *page_size, *page_idx)?;
+                Ok(())
+            }
         }
     } else {
         banner();
         testing_main(&cli_opts, &profile)
     }
+}
+
+fn race_demo(rounds: usize, page_size: usize) -> anyhow::Result<bool> {
+    use std::sync::Arc;
+    use std::thread;
+    use std::time::Duration;
+
+    use turso_core::{Buffer, Page, PageCache, PageCacheKey, PageContent};
+
+    let cache = Arc::new(std::sync::RwLock::new(PageCache::new(8)));
+    let key = PageCacheKey::new(1);
+    let mut observed = false;
+
+    for _ in 0..rounds {
+        {
+            let mut c = cache.write().unwrap();
+            let page = Arc::new(Page::new(1));
+            let buffer = Buffer::new_temporary(page_size);
+            let page_content = PageContent {
+                offset: 0,
+                buffer: Arc::new(buffer),
+                overflow_cells: Vec::new(),
+            };
+            page.get().contents = Some(page_content);
+            page.set_loaded();
+            let _ = c.clear();
+            c.insert(key, page).unwrap();
+        }
+
+        let a = cache.clone();
+        let b = cache.clone();
+
+        let t1 = thread::spawn(move || {
+            let page = {
+                let mut c = a.write().unwrap();
+                c.peek(&key, true).unwrap()
+            };
+            let n = page.get_contents().buffer.len();
+            for i in 0..n {
+                let contents = page.get_contents();
+                contents.buffer.as_mut_slice()[i] = 0xAA;
+                if i % 64 == 0 {
+                    thread::yield_now();
+                }
+            }
+        });
+        let t2 = thread::spawn(move || {
+            let page = {
+                let mut c = b.write().unwrap();
+                c.peek(&key, true).unwrap()
+            };
+            let n = page.get_contents().buffer.len();
+            for i in (0..n).rev() {
+                let contents = page.get_contents();
+                contents.buffer.as_mut_slice()[i] = 0x55;
+                if i % 64 == 0 {
+                    thread::yield_now();
+                }
+            }
+        });
+
+        let _ = t1.join();
+        let _ = t2.join();
+
+        // Trigger actual core code on the corrupted page to showcase a panic from asserts
+        {
+            let mut c = cache.write().unwrap();
+            let page = c.peek(&key, false).unwrap();
+            let contents = page.get_contents();
+            let usable = contents.buffer.len();
+            let _ = contents.cell_get(0, usable);
+        }
+        observed = true;
+        thread::sleep(Duration::from_millis(5));
+    }
+    Ok(observed)
+}
+
+fn race_flush(path: &str, page_size: usize, page_idx: usize) -> anyhow::Result<()> {
+    use std::sync::Arc;
+    use std::thread;
+
+    use turso_core::{Buffer, PageCacheKey, PageContent};
+    use turso_core::{Database, DatabaseOpts, OpenFlags};
+
+    // Open a real database file (creates if missing), obtain a pager
+    let (io, db) = Database::open_new(
+        path,
+        Option::<&str>::None,
+        OpenFlags::Create,
+        DatabaseOpts::default(),
+    )?;
+    let conn = db.connect()?;
+    let pager = conn.pager_arc();
+
+    // Read the target page into cache
+    let (page, c_opt) = pager.read_page(page_idx)?;
+    if let Some(c) = c_opt {
+        pager.io.wait_for_completion(c)?;
+    }
+
+    // Ensure page has contents loaded; if not, fabricate a buffer to race on
+    if page.get().contents.is_none() {
+        let buffer = Buffer::new_temporary(page_size);
+        let content = PageContent {
+            offset: 0,
+            buffer: Arc::new(buffer),
+            overflow_cells: Vec::new(),
+        };
+        page.get().contents = Some(content);
+        page.set_loaded();
+    }
+
+    // Race two threads mutating the same page via the shared cache
+    let cache = pager.page_cache_arc();
+    let key = PageCacheKey::new(page_idx);
+    let a = cache.clone();
+    let b = cache.clone();
+    let t1 = thread::spawn(move || {
+        let page = {
+            let mut c = a.write();
+            c.peek(&key, true).unwrap()
+        };
+        let n = page.get_contents().buffer.len();
+        for i in 0..n {
+            page.get_contents().buffer.as_mut_slice()[i] = 0xAA;
+            if i % 64 == 0 {
+                std::thread::yield_now();
+            }
+        }
+    });
+    let t2 = thread::spawn(move || {
+        let page = {
+            let mut c = b.write();
+            c.peek(&key, true).unwrap()
+        };
+        let n = page.get_contents().buffer.len();
+        for i in (0..n).rev() {
+            page.get_contents().buffer.as_mut_slice()[i] = 0x55;
+            if i % 64 == 0 {
+                std::thread::yield_now();
+            }
+        }
+    });
+    let _ = t1.join();
+    let _ = t2.join();
+
+    // Mark dirty and flush to WAL to persist
+    pager.add_dirty(&page);
+    let completions = pager.cacheflush()?;
+    for c in completions {
+        io.wait_for_completion(c)?;
+    }
+
+    // Drop in-memory page from cache so we re-read from persisted WAL
+    let pc = pager.page_cache_arc();
+    let mut c = pc.write();
+    let _ = c.delete(key);
+
+    // Re-read page and try to interpret; this will likely panic in core code
+    let (page2, c_opt) = pager.read_page(page_idx)?;
+    if let Some(c) = c_opt {
+        pager.io.wait_for_completion(c)?;
+    }
+    let contents = page2.get_contents();
+    let _ = contents.cell_get(0, contents.buffer.len());
+    Ok(())
 }
 
 fn testing_main(cli_opts: &SimulatorCLI, profile: &Profile) -> anyhow::Result<()> {

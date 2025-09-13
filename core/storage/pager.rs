@@ -562,6 +562,10 @@ enum FreePageState {
 }
 
 impl Pager {
+    #[cfg(feature = "simulator")]
+    pub fn page_cache_arc(&self) -> Arc<parking_lot::RwLock<PageCache>> {
+        self.page_cache.clone()
+    }
     pub fn new(
         db_file: Arc<dyn DatabaseStorage>,
         wal: Option<Rc<RefCell<dyn Wal>>>,

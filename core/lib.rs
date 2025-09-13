@@ -78,8 +78,9 @@ use std::{
 use storage::database::DatabaseFile;
 pub use storage::database::IOContext;
 pub use storage::encryption::{EncryptionContext, EncryptionKey};
-use storage::page_cache::PageCache;
+pub use storage::page_cache::{PageCache, PageCacheKey};
 use storage::pager::{AtomicDbState, DbState};
+pub use storage::sqlite3_ondisk::PageContent;
 use storage::sqlite3_ondisk::PageSize;
 pub use storage::{
     buffer_pool::BufferPool,
@@ -942,6 +943,10 @@ impl Drop for Connection {
 }
 
 impl Connection {
+    #[cfg(feature = "simulator")]
+    pub fn pager_arc(&self) -> Rc<Pager> {
+        self.pager.borrow().clone()
+    }
     #[instrument(skip_all, level = Level::INFO)]
     pub fn prepare(self: &Arc<Connection>, sql: impl AsRef<str>) -> Result<Statement> {
         if self.closed.get() {

@@ -173,6 +173,37 @@ pub enum SimulatorCommand {
     },
     /// Print profile Json Schema
     PrintSchema,
+    #[clap(about = "demonstrate concurrent page write corruption without panics")]
+    RaceDemo {
+        #[clap(
+            short = 'r',
+            long,
+            help = "number of race attempts to try",
+            default_value_t = 10
+        )]
+        rounds: usize,
+        #[clap(
+            short = 's',
+            long,
+            help = "size of the page buffer in bytes",
+            default_value_t = 4096
+        )]
+        page_size: usize,
+    },
+    #[clap(about = "race + flush to WAL to prove durability (will likely panic)")]
+    RaceFlush {
+        #[clap(
+            short = 'p',
+            long,
+            help = "database path to use",
+            default_value = "./race_flush.db"
+        )]
+        path: String,
+        #[clap(short = 's', long, help = "page size", default_value_t = 4096)]
+        page_size: usize,
+        #[clap(short = 'i', long, help = "page index to corrupt", default_value_t = 1)]
+        page_idx: usize,
+    },
 }
 
 impl SimulatorCLI {
