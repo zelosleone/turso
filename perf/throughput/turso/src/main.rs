@@ -26,6 +26,13 @@ struct Args {
 
     #[arg(short = 'm', long = "mode", default_value = "legacy")]
     mode: TransactionMode,
+
+    #[arg(
+        long = "think",
+        default_value = "0",
+        help = "Per transaction think time (ms)"
+    )]
+    think: u64,
 }
 
 #[tokio::main]
@@ -66,6 +73,7 @@ async fn main() -> Result<()> {
                 args.iterations,
                 barrier,
                 args.mode,
+                args.think,
             ))
         });
 
@@ -139,6 +147,7 @@ async fn worker_thread(
     iterations: usize,
     start_barrier: Arc<Barrier>,
     mode: TransactionMode,
+    think_ms: u64,
 ) -> Result<u64> {
     let conn = db.connect()?;
 
@@ -166,6 +175,10 @@ async fn worker_thread(
             ]))
             .await?;
             total_inserts += 1;
+        }
+
+        if think_ms > 0 {
+            tokio::time::sleep(tokio::time::Duration::from_millis(think_ms)).await;
         }
 
         conn.execute("COMMIT", ()).await?;
