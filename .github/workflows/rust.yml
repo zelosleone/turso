@@ -70,6 +70,12 @@ jobs:
         run: ./scripts/run-sim --maximum-tests 1000 --min-tick 10 --max-tick 50 --profile write_heavy loop -n 10 -s
       - name: Simulator Faultless
         run: ./scripts/run-sim --maximum-tests 1000 --min-tick 10 --max-tick 50 --profile faultless loop -n 10 -s
+      - name: Race demo (in-memory corruption, expected panic)
+        continue-on-error: true
+        run: ./scripts/run-sim race-demo --rounds 1 --page-size 4096
+      - name: Race flush (persist corruption to WAL, expected panic)
+        continue-on-error: true
+        run: ./scripts/run-sim race-flush --path ./race_flush.db --page-size 4096 --page-idx 1
 
   test-limbo:
     runs-on: blacksmith-4vcpu-ubuntu-2404
