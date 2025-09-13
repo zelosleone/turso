@@ -1350,9 +1350,9 @@ impl Pager {
                     let mut pages: Vec<PageRef> = Vec::with_capacity(dirty_ids.len().min(IOV_MAX));
                     let total = dirty_ids.len();
 
+                    let mut cache = self.page_cache.write();
                     for (i, page_id) in dirty_ids.into_iter().enumerate() {
                         let page = {
-                            let mut cache = self.page_cache.write();
                             let page_key = PageCacheKey::new(page_id);
                             let page = cache.get(&page_key)?.expect(
                                 "dirty list contained a page that cache dropped (page={page_id})",
